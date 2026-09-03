@@ -165,7 +165,7 @@ export interface Alert {
 }
 
 export interface DocumentItem {
-  id: "string";
+  id: string;
   projectId: string;
   fileName: string;
   fileType: "pdf" | "xlsx" | "png" | "jpg";

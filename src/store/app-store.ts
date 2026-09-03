@@ -2,6 +2,8 @@
 
 import { create } from "zustand";
 import type { Project, User, ViewId } from "@/lib/projectassure/types";
+
+export type { ViewId };
 import { getProjects } from "@/lib/projectassure/engine";
 
 interface AppState {

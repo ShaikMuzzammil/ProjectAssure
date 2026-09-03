@@ -90,7 +90,7 @@ export function extractFeatures(p: Project): MlFeatures {
 
   const monsoon = NOW.getMonth() >= 5 && NOW.getMonth() <= 8 ? 1 : 0;
 
-  const procurementDays = p.status === "ACTIVE" && delayedMs.length > 0 ? Math.round(6 + delayedMs.length * 4 + (p.health === "C" ? 8 : 0)) : clamp(Math.round(randJitter(p.id, "proc") * 6), 0, 12);
+  const procurementDays = p.status === "ACTIVE" && delayedMs.length > 0 ? Math.round(6 + delayedMs.length * 4 + (p.healthStatus === "CRITICAL" ? 8 : 0)) : clamp(Math.round(randJitter(p.id, "proc") * 6), 0, 12);
   const teamAdequacy = clamp(0.72 + (p.resourceScore / 100) * 0.35, 0.5, 1.05);
   const depHealth = clamp(1 - delayedMs.length * 0.14, 0.05, 1);
 

@@ -141,7 +141,7 @@ export function DashboardView() {
           <SectionTitle title="Budget Utilisation" sub="Portfolio spend vs sanction" />
           <div className="relative mt-2 h-[150px]">
             <ResponsiveContainer width="100%" height="100%">
-              <RadialBarChart innerRadius="66%" outerRadius="100%" data={gaugeData} startAngle={210} endAngle={-30} domain={[0, 100]}>
+              <RadialBarChart innerRadius="66%" outerRadius="100%" data={gaugeData} startAngle={210} endAngle={-30}>
                 <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
                 <RadialBar background={{ fill: "#e2e8f0" }} dataKey="value" cornerRadius={10} />
               </RadialBarChart>

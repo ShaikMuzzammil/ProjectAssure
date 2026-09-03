@@ -115,10 +115,10 @@ function computeHealthFor(p: Project, def: ProjDef) {
   return { schedule: j(1), budget: j(2), resources: j(3), milestones: j(4) };
 }
 
-function buildRiskAssessment(p: Project, tier: "A" | "C"): RiskAssessment {
+function buildRiskAssessment(p: Project, tier: "R" | "A" | "C"): RiskAssessment {
   const critical = tier === "C";
   return {
-    scheduleRisk: critical ? 86 : p.health === "AT_RISK" ? 62 : 55,
+    scheduleRisk: critical ? 86 : tier === "A" ? 62 : 55,
     budgetRisk: critical ? 74 : 68,
     resourceRisk: critical ? 58 : 41,
     overallRisk: critical ? 82 : 61,

@@ -276,7 +276,7 @@ function MilestonesTab({ p }: { p: never | { milestones: import("@/lib/projectas
   );
 }
 
-function BudgetTab({ p, forecast }: { p: { budgetRecords: never[]; totalBudget: number }; forecast: ReturnType<typeof computeBudgetForecast> }) {
+function BudgetTab({ p, forecast }: { p: { totalBudget: number }; forecast: ReturnType<typeof computeBudgetForecast> }) {
   const data = forecast.points;
   return (
     <div className="space-y-4">
