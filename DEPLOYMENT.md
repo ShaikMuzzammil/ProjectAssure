@@ -275,6 +275,29 @@ Then pin to a real one, e.g. `"@radix-ui/react-collapsible": "^1.1.20"`, commit,
   git add package-lock.json && git commit -m "regenerate lockfile" && git push
   ```
 
+### ❌ `Error: ENOENT: no such file or directory, open '/vercel/path0/.next/next-server.js.nft.json'`
+
+**This exact error is already fixed in this repo.** It hits Next.js **16.3.x** projects
+that set `output: "standalone"` in `next.config` (see [vercel/next.js#96646](https://github.com/vercel/next.js/issues/96646)):
+16.3 no longer emits `.next/next-server.js.nft.json`, but Vercel's `onBuildComplete`
+hook still expects it — so the build compiles, generates all static pages, and then
+dies in "Finalizing page optimization" / `onBuildComplete`. Local builds pass; only
+Vercel fails.
+
+**Fix applied** (in `next.config.ts`):
+
+```ts
+const nextConfig: NextConfig = {
+  output: process.env.VERCEL ? undefined : "standalone",
+  reactStrictMode: false,
+};
+```
+
+Vercel always sets the `VERCEL` env var, so on Vercel the standalone output is
+disabled (Vercel packages the app itself) while Docker/self-hosted `next start`
+deployments still get `standalone`. If you hit this on your own project: remove
+`output: "standalone"` (or use the conditional above), commit, redeploy.
+
 ### ❌ Type errors fail the build
 
 This repo enforces `tsc` during `next build` (the old `ignoreBuildErrors: true` mask was removed). All current errors are fixed; if you add new code and see TS errors, run `npx tsc --noEmit` locally first.
