@@ -100,6 +100,32 @@ export function scopedProjects(projects: Project[], user: User): Project[] {
   }
 }
 
+// v13: derive the alert pathway for a given (project, user) pair.
+//  - "demo"      → seeded demo projects owned by demo personas (id starts with "prj-" without ownerId, OR ownerId starts with "u-")
+//  - "fresh"     → projects created by registered users (ownerId set AND not a demo user id)
+//  - "broadcast" → admin-originated notifications explicitly tagged as broadcast
+//
+// This keeps demo-account noise out of fresh users' feeds and vice-versa.
+export function alertPathwayFor(project: { ownerId?: string } | undefined, user: { source?: "demo" | "registered" }): "demo" | "fresh" {
+  if (!project) return user.source === "registered" ? "fresh" : "demo";
+  // Project created by a registered user → fresh lane
+  if (project.ownerId && !project.ownerId.startsWith("u-")) return "fresh";
+  // Seeded demo project → demo lane
+  return "demo";
+}
+
+// v13: does the given pathway apply to the given user? Broadcasts always apply.
+export function pathwayApplies(pathway: "demo" | "fresh" | "broadcast" | undefined, user: { source?: "demo" | "registered"; role: string }): boolean {
+  if (pathway === "broadcast") return true;
+  // ADMIN sees both lanes (org-wide view)
+  if (user.role === "ADMIN") return true;
+  if (pathway === "demo") return user.source !== "registered";
+  if (pathway === "fresh") return user.source === "registered";
+  // Untagged alerts (legacy): show only to demo users to keep fresh users clean
+  return user.source !== "registered";
+}
+
+
 // ─── Alert rule evaluation (runs after mutations) ───────────────────────────
 export interface RuleEvaluation { rule: string; severity: Alert["severity"]; type: Alert["type"]; title: string; description: string; action: string; owner: string; deadline: string; }
 

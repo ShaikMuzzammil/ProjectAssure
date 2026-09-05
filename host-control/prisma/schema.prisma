@@ -1,0 +1,21 @@
+// ProjectAssure Host Control — empty Prisma client (in-memory app).
+// The schema is intentionally minimal: the host-control app does NOT persist
+// to a database; all demo state lives in the seed module + Zustand. The
+// schema exists only so `prisma generate` succeeds during install.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String   @default("VIEWER")
+  createdAt DateTime @default(now())
+}

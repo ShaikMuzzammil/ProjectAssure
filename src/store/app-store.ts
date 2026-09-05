@@ -86,8 +86,15 @@ interface AppState {
   aiSeedQuestion: string | null;
   aiContextProjectId: string | null;   // v4: project-scoped Intelligence recommended system
   aiLiveMode: boolean;
+  aiUniversalMode: boolean;            // v13: universal assistant — answers general questions too
+  aiAttachedFiles: { name: string; type: string; size: number; text: string }[];  // v13: uploaded file context
   aiStatus: { connected: boolean; label: string; tier: string } | null;  // v11: live-service probe result
   refreshAiStatus: () => Promise<void>;                                  // v11: probe /api/ai/status (cached server-side)
+  // v13: AI centre setters
+  setAiUniversalMode: (v: boolean) => void;
+  attachAiFile: (f: { name: string; type: string; size: number; text: string }) => void;
+  detachAiFile: (name: string) => void;
+  clearAiFiles: () => void;
   exportHistory: { id: string; kind: string; format: string; at: string; by: string; scope: string }[];
   eventTick: number;
 
@@ -242,9 +249,16 @@ export const useApp = create<AppState>()(
       aiSeedQuestion: null,
       aiContextProjectId: null,
       aiLiveMode: false,
+      aiUniversalMode: false,           // v13: default project-scoped
+      aiAttachedFiles: [],              // v13: empty until user uploads
       exportHistory: [],
       eventTick: 0,
       aiStatus: null,
+      // v13: AI centre setters
+      setAiUniversalMode: (v) => set({ aiUniversalMode: v }),
+      attachAiFile: (f) => set(s => ({ aiAttachedFiles: cap([...s.aiAttachedFiles.filter(x => x.name !== f.name), f], 5) })),
+      detachAiFile: (name) => set(s => ({ aiAttachedFiles: s.aiAttachedFiles.filter(x => x.name !== name) })),
+      clearAiFiles: () => set({ aiAttachedFiles: [] }),
 
       // ─── lifecycle ────────────────────────────────────────────────────────
       boot: () => {
@@ -801,14 +815,22 @@ export const useApp = create<AppState>()(
         if (get().aiLiveMode) {
           const snapshot = scopedList.slice().sort((a, b) => a.healthScore - b.healthScore).slice(0, 10).map(p =>
             `${p.psId} "${p.name}" | ${p.district}, ${p.state} | ${p.sector} | status ${p.status} | health ${p.healthScore} (${p.healthStatus}) S${p.scheduleScore}/B${p.budgetScore}/R${p.resourceScore}/M${p.milestoneScore} | progress ${p.progress}% | sanction ₹${p.totalBudget}L spent ₹${p.spentBudget}L projected ₹${p.projectedBudget}L | delay ${p.prediction ? Math.round(p.prediction.probability * 100) + "% " + p.prediction.estimatedDays + "d CI" + p.prediction.ciLower + "-" + p.prediction.ciUpper : "n/a"} | top factor: ${p.prediction?.factors[0]?.label ?? "n/a"} | unread alerts: ${p.alerts.filter(a => !a.isRead).map(a => a.title).join("; ") || "none"} | latest doc: ${p.documents[0]?.fileName ?? "none"}`).join("\n");
-          const dossier = ctxProject ? buildProjectDossier(ctxProject, scopedList) : "";
+          const dossier = (!get().aiUniversalMode && ctxProject) ? buildProjectDossier(ctxProject, scopedList) : "";
+          // v13: last 6 turns as history for multi-turn continuity
+          const history = (threadId ? get().chatThreads.find(t => t.id === threadId)?.messages.slice(-6) : undefined) ?? [];
+          // v13: attached files (text already extracted client-side)
+          const files = get().aiAttachedFiles.slice(0, 5);
           try {
             const res = await fetch("/api/ai/chat", {
               method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 question, user: { name: get().user?.name, role: get().user?.role },
-                context: `PORTFOLIO (${scopedList.length} projects, worst first):\n${snapshot}`,
+                // In universal mode, no project context — let the model answer freely.
+                context: get().aiUniversalMode ? "" : `PORTFOLIO (${scopedList.length} projects, worst first):\n${snapshot}`,
                 dossier,
+                universal: get().aiUniversalMode,
+                files: files.map(f => ({ name: f.name, type: f.type, size: f.size, text: f.text })),
+                history: history.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content ?? "" })),
               }),
             });
             if (res.ok) {
@@ -822,7 +844,13 @@ export const useApp = create<AppState>()(
 
         // Deterministic path (live mode off, or the live service was unavailable):
         if (!answer) {
-          if (ctxProject && /plan|should|recommend|next|do|assess|advice|why|risk|status|report/i.test(question)) {
+          // v13: in universal mode with no project context, defer to a friendly offline message
+          if (get().aiUniversalMode && !ctxProject) {
+            answer = {
+              answer: "Universal mode is on but no live intelligence provider is available right now.\n\n→ Do: enable `GEMINI_API_KEY` (free at aistudio.google.com/apikey) in your `.env` to unlock universal answers — owner Administrator, by next deploy.",
+              toolCalls: [], citations: [], intent: "universal-offline", dataFreshness: "offline · no provider connected", grounded: false, source: "builtin" as const,
+            };
+          } else if (ctxProject && /plan|should|recommend|next|do|assess|advice|why|risk|status|report/i.test(question)) {
             answer = buildProjectActionPlan(ctxProject, get().vectorIndex);
             const trace0 = answer.toolCalls[0];
             if (trace0) trace0.args = `context: ${ctxProject.psId} · ${question.slice(0, 80)}`;
@@ -969,6 +997,7 @@ export const useApp = create<AppState>()(
         thresholds: s.thresholds, alertRules: s.alertRules, emailSettings: s.emailSettings,
         modelVersions: s.modelVersions, dataMode: s.dataMode, liveEventsEnabled: s.liveEventsEnabled,
         density: s.density, exportHistory: s.exportHistory, eventTick: s.eventTick, booted: s.booted, tourSeen: s.tourSeen,
+        aiUniversalMode: s.aiUniversalMode,  // v13: persists universal mode across reloads
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.vectorIndex = buildIndex(state.projects ?? []);

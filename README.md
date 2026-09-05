@@ -1,111 +1,115 @@
-<div align="center">
+# 🛡️ ProjectAssure Prototype (main app + host-control)
 
-# 🛡️ ProjectAssure
-
-### Intelligence-Powered Predictive Project Monitoring Platform
-
-**Smart India Hackathon 2026 · SIH26103 · Team NEXGEN** — Amrita Vishwa Vidyapeetham, Chennai
-
-**Every button works. Every number is grounded. Every action is audit-logged.**
-
-`v12 · the deployment-hardened release` — Gemini-first provider chain · full project dossier grounding · concise decidable answers · **Vercel-clean install (dependency conflict fixed)**
-
-</div>
+> **Monorepo structure** — this folder is the single GitHub repo you push to
+> deploy **two** Vercel projects from one codebase:
+>
+> - **Main app** (this folder root) → the user-facing ProjectAssure prototype
+> - **Host Control** (`./host-control/`) → the master admin plane
+>
+> Both share the same codebase, same seed data, same team — they just deploy to
+> separate Vercel projects that link to each other.
 
 ---
 
-## Run it (60 seconds)
+## Quick start (local)
 
 ```bash
-bun install          # or: npm install
-bun run dev          # or: npm run dev
-# → http://localhost:3000 → “Launch demo” → pick a persona → sign in
+# From this folder:
+npm install --legacy-peer-deps
+npm run dev            # main app on http://localhost:3000
+
+# In a second terminal:
+cd host-control
+npm install --legacy-peer-deps
+npm run dev            # host-control on http://localhost:3001
 ```
 
-Zero configuration needed: with **no API keys at all** the app runs its built-in
-engine + demo world completely offline (jury-safe). Add keys to upgrade
-individual subsystems — the app detects them automatically and shows live status.
+Both apps run side-by-side on ports 3000 and 3001. The host-control polls the
+main app's `/api/health` every 5 seconds.
 
-## Optional keys (`.env.example` has the full annotated template)
+---
 
-| Purpose | Key | Free? | Where |
-|---|---|---|---|
-| **Live intelligence answers** (top priority) | `GEMINI_API_KEY` | ✅ free | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| Fallback 1 — very fast | `GROQ_API_KEY` | ✅ free | [console.groq.com/keys](https://console.groq.com/keys) |
-| Fallback 2 — community models | `OPENROUTER_API_KEY` | ✅ free | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
-| Fallback 3 | `OPENAI_API_KEY` | paid | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| Server-side per-user data | `DATABASE_URL` (Neon) | ✅ free | [neon.tech](https://neon.tech) |
-| Real outbound email | `EMAIL_USER`+`EMAIL_PASS` / `BREVO_API_KEY` / `RESEND_API_KEY` | ✅ free | see `.env.example` |
+## Deploy to Vercel (TWO projects from ONE repo)
 
-**The intelligence chain:** Gemini (free) → Groq (free) → OpenRouter (free) →
-OpenAI → built-in engine. The first working provider serves every answer; if it
-ever fails mid-demo, the built-in engine answers instead — the demo cannot break.
-Each user sees only a masked status (“live intelligence service · connected”);
-keys never reach the browser.
+### Project 1 — the main app
 
-## What the assistant analyzes (not a chatbot — a project analyst)
+1. Push this folder to a GitHub repo (e.g. `projectassure-prototype`).
+2. Go to [vercel.com/new](https://vercel.com/new) → import the repo.
+3. Vercel auto-detects Next.js from the root `package.json`.
+4. **Deploy** → main app live at `https://project-assure.vercel.app`.
 
-When you ask from inside a project, the live service receives the **full project
-dossier**: every uploaded document's real text, the live risk register,
-milestones, budget position, delay prediction with factors, KPIs, open alerts,
-**pending change orders awaiting approval** and the engine's own ranked
-recommended actions — then answers in one strict shape: **answer first → ≤4
-evidence bullets with real numbers → one action (owner + deadline)**. Approval
-questions end with an explicit recommendation and the single missing item that
-would settle it.
+### Project 2 — the host-control admin plane
 
-## Deploy (one web address, ~10 minutes)
+1. From the **same GitHub repo**, go to [vercel.com/new](https://vercel.com/new)
+   → import the repo again.
+2. **IMPORTANT:** under "Root Directory", set it to `host-control` (NOT the repo
+   root). Vercel will then build the host-control app instead of the main app.
+3. Add environment variables:
+   - `GEMINI_API_KEY` — free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   - `MAIN_PROJECT_URL` — the URL of your main app from Project 1 above
+4. **Deploy** → host-control live at `https://projectassure-host.vercel.app`
+   (or whatever URL you prefer).
 
-**GitHub → Vercel:**
+The two deployments now talk to each other:
 
-1. Push this repo to GitHub (`src/` + configs only — old versions are already
-   git-ignored).
-2. [vercel.com/new](https://vercel.com/new) → import the repo → **Deploy**
-   (Next.js is auto-detected; no settings needed).
-3. Vercel → Settings → Environment Variables → add any optional keys above →
-   Redeploy.
+- Host-control polls `<MAIN_PROJECT_URL>/api/health` every 5 seconds.
+- Both share the same seed data (4 demo personas + 30 demo projects) so the
+  host-control shows realistic content even if the main app is unreachable.
 
-**v12 deployment fixes** (if your Vercel build previously failed):
+---
 
-- `next-auth` was **removed** (it was never imported anywhere in `src/`) — its
-  optional peer dependency `nodemailer@^7` conflicted with `nodemailer@^9`
-  and broke `npm install` on Vercel with `ERESOLVE`.
-- `nodemailer` is pinned to **`^7.0.13`** (same `createTransport`/`sendMail`
-  API the Email Centre uses) and `@types/nodemailer` to `^7.0.12`.
-- A root **`.npmrc` with `legacy-peer-deps=true`** ships with the repo, so npm
-  never hard-fails on any other peer range.
-- The **`build` script is now Vercel-aware**: it runs plain `next build` on
-  Vercel and only assembles the standalone bundle locally (`npm start`).
-- `postinstall: prisma generate` works **without `DATABASE_URL`** (verified) —
-  the prototype runs in browser-persistence mode on Vercel with zero env vars.
+## Folder layout
 
-No `vercel.json` is needed — Vercel auto-detects Next.js from `package.json`.
-A full clean `npm install` + `npm run build` with `VERCEL=1` was verified
-end-to-end before packaging this zip.
+```
+prototype/                         ← GitHub repo root · Vercel Project 1
+├── src/                           ← main app source (Next.js 16)
+├── public/                        ← static assets
+├── prisma/                        ← Prisma schemas (SQLite + Postgres variants)
+├── package.json                   ← main app deps
+├── next.config.ts                 ← main app Next config
+├── vercel.json                    ← Vercel build config for main app
+├── .env.example                   ← full annotated env template
+├── .npmrc                         ← legacy-peer-deps=true (npm safety)
+│
+└── host-control/                  ← Vercel Project 2 (set as Root Directory)
+    ├── src/                       ← host-control source (Next.js 16)
+    ├── public/
+    ├── prisma/
+    ├── package.json               ← host-control deps
+    ├── next.config.ts
+    ├── vercel.json
+    ├── .env.example
+    └── README.md                  ← host-control-specific deployment guide
+```
 
-Local production check before pushing: `npm run build && npm start`.
+---
 
-## The 7 features (all working)
+## Why monorepo?
 
-| # | Feature | What it does |
+- **Single source of truth** — change a seed value once, both apps reflect it
+- **Atomic deploys** — push one commit, rebuild both apps
+- **Easier code review** — diff shows changes across both apps in one PR
+- **Team-aligned** — the same six engineers own both apps
+
+The host-control is **intentionally a separate Vercel project** (not a route
+inside the main app) because:
+
+- It has its own env vars (different `MAIN_PROJECT_URL` per environment)
+- It can scale independently (admins are few; users are many)
+- It can be taken offline for maintenance without affecting the user-facing app
+
+---
+
+## Optional environment variables
+
+See `.env.example` in each folder for the full annotated template. The TL;DR:
+
+| Purpose | Key | Where |
 |---|---|---|
-| 1 | **Dashboard** | 4 big numbers + live feed of the whole portfolio |
-| 2 | **Projects** | grid/folder views → 6-step wizard → full workspace with documents, risks, Gantt, budget |
-| 3 | **Assure Intelligence** | the project analyst described above (live + built-in) |
-| 4 | **Prediction Engine** | 18-signal delay/cost prediction with explainable factors |
-| 5 | **Reports & Exports** | pick **what** to export (faults / recommendations / …) → PDF · Excel · CSV |
-| 6 | **Email Centre** | real outbound email when keys are set, honest outbox simulation otherwise |
-| 7 | **Help & Guide** | every workflow documented with one line each |
+| Live intelligence (Gemini) | `GEMINI_API_KEY` | both folders |
+| Fallback 1 (Groq) | `GROQ_API_KEY` | both folders |
+| Fallback 2 (OpenRouter) | `OPENROUTER_API_KEY` | both folders |
+| Real outbound email | `EMAIL_USER` + `EMAIL_PASS` (or `BREVO_API_KEY` / `RESEND_API_KEY`) | main app only |
+| Host-control → main app link | `MAIN_PROJECT_URL` | host-control only |
 
-## Stack (honest version — in docs, masked in the UI)
-
-Next.js 16 (App Router) · TypeScript · Tailwind CSS · Zustand · Prisma (optional
-Neon PostgreSQL) · Gemini/Groq/OpenRouter/OpenAI provider chain · in-browser
-document reading + 45-pattern risk scanner · deterministic 18-signal prediction
-engine · PDF/Excel/CSV export.
-
-## Full documentation
-
-See `docs/` in the submission package (WORKFLOWS.md — every workflow in one
-line; 15 per-workflow guides; DEPLOYMENT_GUIDE with key setup; TEAM_GUIDE;
-USER_GUIDE).
+With **zero env vars** the app runs in offline/built-in mode (jury-safe).

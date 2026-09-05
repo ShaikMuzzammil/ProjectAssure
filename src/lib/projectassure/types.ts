@@ -14,7 +14,8 @@ export type AlertType =
   | "MILESTONE_SLIPPAGE"
   | "DATA_STALENESS"
   | "RESOURCE_BOTTLENECK"
-  | "DELAY_PREDICTION";
+  | "DELAY_PREDICTION"
+  | "MANUAL_BROADCAST";
 export type UserRole = "ADMIN" | "PROJECT_MANAGER" | "STAKEHOLDER" | "VIEWER";
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ResourceCategory = "HUMAN" | "EQUIPMENT" | "MATERIAL";
@@ -173,6 +174,11 @@ export interface ModelVersion {
 }
 
 // ─── Alerts & notifications ─────────────────────────────────────────────────
+// v13: pathway separates demo-account alerts from fresh-user alerts so that
+// freshly-registered users never see the demo portfolio's noise, and demo
+// personas never see a fresh user's private project alerts. Broadcasts go to all.
+export type AlertPathway = "demo" | "fresh" | "broadcast";
+
 export interface Alert {
   id: string;
   projectId: string;
@@ -189,6 +195,7 @@ export interface Alert {
   recommendedOwner: string;
   recommendedDeadline: string;    // human text
   emailQueued?: boolean;
+  pathway?: AlertPathway;         // v13: routing lane — defaults to "demo" for seeded projects
 }
 
 export interface Notification {

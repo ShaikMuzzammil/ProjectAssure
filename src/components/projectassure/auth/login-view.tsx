@@ -37,112 +37,112 @@ export default function LoginView() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#0c93e7] dark:bg-[#0a5f97]">
-      {/* v8: universal official portal band on the login surface too */}
+    // v13: calmer login — soft neutral background instead of intense ministry blue + radial glow.
+    // One quiet accent strip on the left for branding; the right card is clean white.
+    <div className="relative flex min-h-screen flex-col bg-muted/30">
       <GovHeader surface="public" className="relative z-10" />
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-8">
-      {/* blueprint grid over solid ministry blue */}
-      <div className="absolute inset-0 opacity-60"
-        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
-      <div className="absolute inset-0"
-        style={{ background: "radial-gradient(900px 500px at 15% 0%, rgba(255,255,255,0.10), transparent 55%), radial-gradient(700px 500px at 100% 100%, rgba(7,43,73,0.45), transparent 60%)" }} />
 
-      <div className="relative mx-auto grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-12">
-        {/* ─── LEFT — brand, one-line pitch, demo personas (one per role) ─── */}
-        <div className="hidden flex-col text-white lg:flex">
-          <button onClick={() => goPage("landing")} className="mb-6 flex items-center gap-1.5 text-[12px] font-medium text-white/60 transition hover:text-white">
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to landing
-          </button>
-
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-              <ShieldAlert className="h-6.5 w-6.5" />
-            </div>
+      <div className="relative flex flex-1 items-stretch justify-center overflow-hidden">
+        <div className="grid w-full max-w-5xl items-stretch gap-0 lg:grid-cols-[1fr_1fr]">
+          {/* ─── LEFT — branding column (calm, single accent) ─── */}
+          <div className="hidden flex-col justify-between border-r border-[#0c93e7]/15 bg-card p-10 lg:flex">
             <div>
-              <div className="text-[24px] font-extrabold leading-tight tracking-tight">ProjectAssure</div>
-              <div className="text-[11.5px] font-medium text-white/60">Secure portal access · Smart India Hackathon 2026</div>
-            </div>
-          </div>
-
-          <h1 className="mt-7 max-w-lg text-[27px] font-bold leading-snug">One dashboard for India&apos;s projects.</h1>
-          <p className="mt-2 max-w-lg text-[13px] leading-relaxed text-white/75">
-            Predicts delays <strong className="font-semibold text-white">30–60 days early</strong>, reads field reports itself, and
-            recommends the next best action — on free-tier infrastructure at <strong className="font-semibold text-white">₹0 running cost</strong>.
-          </p>
-
-          {/* personas — exactly one demo per role type */}
-          <div className="mt-7">
-            <div className="mb-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/50">Choose a demo persona — 4 roles</div>
-            <div className="grid grid-cols-2 gap-2.5">
-              {USERS.map(u => {
-                const Icon = ROLE_ICON[u.role] ?? ClipboardList;
-                const active = persona.id === u.id;
-                return (
-                  <button key={u.id} type="button" onClick={() => pick(u)}
-                    className={cn("rounded-xl border p-3 text-left backdrop-blur transition",
-                      active ? "border-white/40 bg-white/20 shadow-lg" : "border-white/15 bg-white/8 hover:bg-white/15")}>
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 shrink-0 text-white/85" />
-                      {active && <Check className="ml-auto h-3.5 w-3.5 text-white" />}
-                    </div>
-                    <div className="mt-1.5 truncate text-[12px] font-bold leading-tight">{u.persona}</div>
-                    <div className="truncate text-[10px] text-white/60">{u.designation}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-wider text-white/45">{u.role.replace("_", " ")}</div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-2 text-[10.5px] text-white/55">
-              Pick a role to prefill the sign-in card — every persona sees a different, correctly-scoped workspace.
-            </div>
-          </div>
-
-          <div className="mt-auto pt-8 text-[10px] text-white/45">
-            Smart India Hackathon 2026 · SIH26103 · Team NEXGEN · Amrita Vishwa Vidyapeetham Chennai
-          </div>
-        </div>
-
-        {/* ─── RIGHT — the white sign-in / create-account card ─── */}
-        <div className="w-full">
-          {/* mobile persona chips (lg:hidden) */}
-          <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
-            {USERS.map(u => (
-              <button key={u.id} type="button" onClick={() => pick(u)}
-                className={cn("shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold backdrop-blur",
-                  persona.id === u.id ? "border-white/50 bg-white/25 text-white" : "border-white/20 bg-white/10 text-white/80")}>
-                {u.persona}
+              <button onClick={() => goPage("landing")} className="mb-6 flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground transition hover:text-foreground">
+                <ArrowLeft className="h-3.5 w-3.5" /> Back to landing
               </button>
-            ))}
+
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#0c93e7] to-[#0b426e] text-white shadow-sm">
+                  <ShieldAlert className="h-5.5 w-5.5" />
+                </div>
+                <div>
+                  <div className="text-[20px] font-extrabold leading-tight tracking-tight">ProjectAssure</div>
+                  <div className="text-[11px] font-medium text-muted-foreground">Secure portal access · SIH 2026</div>
+                </div>
+              </div>
+
+              <h1 className="mt-7 max-w-md text-[22px] font-bold leading-snug">One dashboard for India&apos;s projects.</h1>
+              <p className="mt-2 max-w-md text-[12.5px] leading-relaxed text-muted-foreground">
+                Predicts delays <strong className="font-semibold text-foreground">30–60 days early</strong>, reads field reports itself, and
+                recommends the next best action — on free-tier infrastructure at <strong className="font-semibold text-foreground">₹0 running cost</strong>.
+              </p>
+            </div>
+
+            {/* personas — one per role, cleaner card style */}
+            <div className="mt-8">
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Choose a demo persona — 4 roles</div>
+              <div className="grid grid-cols-2 gap-2">
+                {USERS.map(u => {
+                  const Icon = ROLE_ICON[u.role] ?? ClipboardList;
+                  const active = persona.id === u.id;
+                  return (
+                    <button key={u.id} type="button" onClick={() => pick(u)}
+                      className={cn("rounded-lg border p-2.5 text-left transition",
+                        active ? "border-[#0c93e7] bg-[#e0effe]/60 shadow-sm dark:bg-[#0c93e7]/10" : "border-border bg-background hover:border-[#0c93e7]/40 hover:bg-muted/40")}>
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-3.5 w-3.5 shrink-0 text-[#015ca0] dark:text-[#7cc8fb]" />
+                        {active && <Check className="ml-auto h-3.5 w-3.5 text-[#015ca0] dark:text-[#7cc8fb]" />}
+                      </div>
+                      <div className="mt-1.5 truncate text-[11.5px] font-bold leading-tight">{u.persona}</div>
+                      <div className="truncate text-[9.5px] text-muted-foreground">{u.designation}</div>
+                      <div className="mt-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">{u.role.replace("_", " ")}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-2 text-[10px] text-muted-foreground">
+                Pick a role to prefill the sign-in card — every persona sees a different, correctly-scoped workspace.
+              </div>
+            </div>
+
+            <div className="mt-8 text-[9.5px] text-muted-foreground">
+              Smart India Hackathon 2026 · SIH26103 · Team NEXGEN · Amrita Vishwa Vidyapeetham Chennai
+            </div>
           </div>
 
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="rounded-2xl bg-card p-7 shadow-2xl shadow-[#072b49]/40">
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0c93e7]">Smart India Hackathon 2026 · SIH26103</div>
-            <h2 className="text-[19px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : "Create your account"}</h2>
-            <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
-              {tab === "signin"
-                ? "Secure access. Pick a persona on the left, or sign in with your registered email."
-                : "Your own workspace — projects, documents, predictions and exports, stored per user."}
-            </p>
+          {/* ─── RIGHT — the clean sign-in / create-account card ─── */}
+          <div className="flex items-center justify-center px-4 py-10 sm:px-8">
+            <div className="w-full max-w-md">
+              {/* mobile persona chips */}
+              <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
+                {USERS.map(u => (
+                  <button key={u.id} type="button" onClick={() => pick(u)}
+                    className={cn("shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold",
+                      persona.id === u.id ? "border-[#0c93e7] bg-[#e0effe]/60 text-[#015ca0] dark:bg-[#0c93e7]/10 dark:text-[#7cc8fb]" : "border-border bg-background text-muted-foreground")}>
+                    {u.persona}
+                  </button>
+                ))}
+              </div>
 
-            <AnimatePresence mode="wait">
-              {tab === "signin"
-                ? <motion.div key="signin" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} transition={{ duration: 0.16 }}>
-                  <SignInPanel login={login} email={email} password={password} setEmail={setEmail} setPassword={setPassword}
-                    persona={persona} switchToSignUp={() => setTab("signup")} goPage={goPage} />
-                </motion.div>
-                : <motion.div key="signup" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
-                  <SignUpPanel signUp={signUp} switchToSignIn={() => setTab("signin")} />
-                </motion.div>}
-            </AnimatePresence>
-          </motion.div>
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="rounded-2xl border bg-card p-7 shadow-sm">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0c93e7] dark:text-[#36adf6]">Smart India Hackathon 2026 · SIH26103</div>
+                <h2 className="text-[18px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : "Create your account"}</h2>
+                <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
+                  {tab === "signin"
+                    ? "Secure access. Pick a persona on the left, or sign in with your registered email."
+                    : "Your own workspace — projects, documents, predictions and exports, stored per user."}
+                </p>
 
-          <div className="mt-3 text-center text-[10px] text-white/55 lg:hidden">
-            SIH 2026 · SIH26103 · Team NEXGEN
+                <AnimatePresence mode="wait">
+                  {tab === "signin"
+                    ? <motion.div key="signin" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} transition={{ duration: 0.16 }}>
+                      <SignInPanel login={login} email={email} password={password} setEmail={setEmail} setPassword={setPassword}
+                        persona={persona} switchToSignUp={() => setTab("signup")} goPage={goPage} />
+                    </motion.div>
+                    : <motion.div key="signup" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
+                      <SignUpPanel signUp={signUp} switchToSignIn={() => setTab("signin")} />
+                    </motion.div>}
+                </AnimatePresence>
+              </motion.div>
+
+              <div className="mt-3 text-center text-[10px] text-muted-foreground lg:hidden">
+                SIH 2026 · SIH26103 · Team NEXGEN
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
     </div>
   );
 }
@@ -168,7 +168,7 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
   return (
     <div>
       {persona && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-[#e0effe]/70 px-3 py-2 dark:bg-[#0c93e7]/10">
+        <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-[#e0effe]/60 px-3 py-2 dark:bg-[#0c93e7]/10">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-[10px] font-bold text-white">{persona.avatarInitials}</div>
           <div className="min-w-0 text-[11px] leading-tight">
             <div className="font-semibold">Demo: {persona.persona}</div>
@@ -196,7 +196,7 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
         </div>
         {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
         <button type="submit" disabled={busy}
-          className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] text-[14px] font-semibold text-white shadow-md shadow-[#0284c7]/25 transition hover:bg-[#0369a1] disabled:opacity-70">
+          className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0b426e] text-[14px] font-semibold text-white shadow-sm transition hover:bg-[#0c93e7] disabled:opacity-70">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Verifying…</> : <>Sign in <ArrowRight className="h-4 w-4" /></>}
         </button>
         <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
@@ -204,7 +204,7 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
         </div>
         <button type="button" onClick={switchToSignUp}
           className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-[13px] font-semibold transition hover:bg-muted">
-          <UserPlus className="h-4 w-4 text-[#0c93e7]" /> Create a new account (free)
+          <UserPlus className="h-4 w-4 text-[#0c93e7] dark:text-[#36adf6]" /> Create a new account (free)
         </button>
         <div className="flex items-center justify-between text-[10.5px] text-muted-foreground">
           <span className="inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-emerald-600" />Securely encrypted passwords</span>
@@ -317,12 +317,12 @@ function SignUpPanel({ signUp, switchToSignIn }: {
       </div>
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
       <button type="submit" disabled={busy || !valid}
-        className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] text-[14px] font-semibold text-white shadow-md shadow-[#0284c7]/25 transition hover:bg-[#0369a1] disabled:opacity-60">
+        className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0b426e] text-[14px] font-semibold text-white shadow-sm transition hover:bg-[#0c93e7] disabled:opacity-60">
         {busy ? <><Loader2 className="h-4 w-4 animate-spin" />Hashing password &amp; creating workspace…</> : <><ShieldCheck className="h-4 w-4" />Create secure account</>}
       </button>
       <button type="button" onClick={switchToSignIn}
         className="w-full text-center text-[11.5px] font-medium text-muted-foreground transition hover:text-foreground">
-        Already have an account? <span className="font-semibold text-[#0c93e7]">Sign in</span>
+        Already have an account? <span className="font-semibold text-[#0c93e7] dark:text-[#36adf6]">Sign in</span>
       </button>
       <p className="text-center text-[10px] leading-relaxed text-muted-foreground">
         8+ characters · stored as one-way encryption · mirrored to secure cloud database when configured. Everything you create is saved to your account.

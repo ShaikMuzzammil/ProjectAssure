@@ -13,8 +13,12 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { ShieldAlert, Check, Mail, Zap, BookOpen, CheckCheck, ArrowRight, FileDown, Radio } from "lucide-react";
+import { ShieldAlert, Check, Mail, Zap, BookOpen, CheckCheck, ArrowRight, FileDown, Radio, Megaphone, Users, FlaskConical } from "lucide-react";
 import { LIVE_EVENT_INTERVAL_MS, eventIcon } from "@/lib/projectassure/events";
+import { alertPathwayFor, pathwayApplies } from "@/lib/projectassure/engine";
+import type { AlertPathway } from "@/lib/projectassure/types";
+
+type PathwayFilter = "mine" | "demo" | "fresh" | "broadcast" | "all";
 
 export default function AlertsView() {
   const user = useApp(s => s.user)!;
@@ -29,12 +33,20 @@ export default function AlertsView() {
   const openProject = useApp(s => s.openProject);
   const navigate = useApp(s => s.navigate);
   const emailSettings = useApp(s => s.emailSettings);
+  const broadcastAlert = useApp(s => (s as { broadcastAlert?: (title: string, message: string, severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW") => void }).broadcastAlert ?? (() => {}));
 
   type SevFilter = "ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   const [filter, setFilter] = useState<SevFilter>("ALL");
+  // v13: pathway filter — defaults to "mine" so fresh users see only their own lane
+  const isFreshUser = user.source === "registered";
+  const [pathwayFilter, setPathwayFilter] = useState<PathwayFilter>(isFreshUser ? "fresh" : "demo");
   const [showRead, setShowRead] = useState(false);
   const [ack, setAck] = useState<{ pid: string; aid: string } | null>(null);
   const [note, setNote] = useState("");
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastTitle, setBroadcastTitle] = useState("");
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [broadcastSev, setBroadcastSev] = useState<"CRITICAL" | "HIGH" | "MEDIUM" | "LOW">("HIGH");
   const liveEvents = useApp(s => s.liveEvents);
   const liveEventsEnabled = useApp(s => s.liveEventsEnabled);
 
@@ -44,11 +56,41 @@ export default function AlertsView() {
   const knownIds = useRef<Set<string>>(new Set());
   const [fresh, setFresh] = useState<string[]>([]);
 
-  const all = useMemo(() => projects.flatMap(p => p.alerts.map(a => ({ ...a, project: p }))), [projects]);
+  // ─── v13: derive pathway for each (alert, project, user) triple ───
+  const all = useMemo(() => projects.flatMap(p => p.alerts.map(a => {
+    const pathway: AlertPathway = a.pathway ?? alertPathwayFor(p, user);
+    return { ...a, project: p, pathway };
+  })), [projects, user]);
+
+  // ─── Pathway counts for the selector ───
+  const pathwayCounts = useMemo(() => ({
+    demo: all.filter(a => a.pathway === "demo" && !a.isRead).length,
+    fresh: all.filter(a => a.pathway === "fresh" && !a.isRead).length,
+    broadcast: all.filter(a => a.pathway === "broadcast" && !a.isRead).length,
+    mine: isFreshUser
+      ? all.filter(a => (a.pathway === "fresh" || a.pathway === "broadcast") && !a.isRead).length
+      : all.filter(a => (a.pathway === "demo" || a.pathway === "broadcast") && !a.isRead).length,
+    all: all.filter(a => !a.isRead).length,
+  }), [all, isFreshUser]);
+
   const unread = all.filter(a => !a.isRead);
   const list = useMemo(() => all
-    .filter(a => (filter === "ALL" || a.severity === filter) && (showRead || !a.isRead))
-    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || +new Date(b.createdAt) - +new Date(a.createdAt)), [all, filter, showRead]);
+    .filter(a => {
+      // severity filter
+      if (filter !== "ALL" && a.severity !== filter) return false;
+      // read filter
+      if (!showRead && a.isRead) return false;
+      // v13: pathway filter
+      if (pathwayFilter === "all") return true;
+      if (pathwayFilter === "mine") {
+        return isFreshUser ? (a.pathway === "fresh" || a.pathway === "broadcast") : (a.pathway === "demo" || a.pathway === "broadcast");
+      }
+      if (pathwayFilter === "demo") return a.pathway === "demo";
+      if (pathwayFilter === "fresh") return a.pathway === "fresh";
+      if (pathwayFilter === "broadcast") return a.pathway === "broadcast";
+      return true;
+    })
+    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || +new Date(b.createdAt) - +new Date(a.createdAt)), [all, filter, showRead, pathwayFilter, isFreshUser]);
 
   useEffect(() => {
     const check = () => {
@@ -68,9 +110,10 @@ export default function AlertsView() {
   const recordExport = useApp(s => s.recordExport);
   const exportAlerts = (fmt: "csv" | "xlsx") => {
     const rows: (string | number)[][] = [[
-      "Severity", "Title", "Project", "PS-ID", "Raised", "Status", "Recommended action", "Owner", "Deadline",
+      "Severity", "Title", "Project", "PS-ID", "Pathway", "Raised", "Status", "Recommended action", "Owner", "Deadline",
     ], ...list.map(a => [
       a.severity, a.title, (a as { project?: { name?: string } }).project?.name ?? "", (a as { project?: { psId?: string } }).project?.psId ?? "",
+      a.pathway ?? "demo",
       new Date(a.createdAt).toLocaleString("en-IN"), a.isRead ? (a.acknowledgedAt ? "ACKNOWLEDGED" : "READ") : "UNREAD",
       a.recommendedAction ?? "", a.recommendedOwner ?? "", a.recommendedDeadline ?? "",
     ])];
@@ -84,6 +127,15 @@ export default function AlertsView() {
     toast.success(`Alerts ${fmt.toUpperCase()} exported`, { description: `${rows.length - 1} alert rows with actions, owners and deadlines · audit-logged` });
   };
 
+  // ─── Pathway selector tabs ───
+  const pathwayTabs: { id: PathwayFilter; label: string; count: number; icon: React.ElementType; tone: string }[] = [
+    { id: "mine", label: isFreshUser ? "My alerts" : "My demo alerts", count: pathwayCounts.mine, icon: ShieldAlert, tone: "bg-[#0b426e] text-white" },
+    { id: "demo", label: "Demo lane", count: pathwayCounts.demo, icon: FlaskConical, tone: "bg-[#e0effe] text-[#015ca0] dark:bg-[#0c93e7]/15 dark:text-[#7cc8fb]" },
+    { id: "fresh", label: "Fresh-user lane", count: pathwayCounts.fresh, icon: Users, tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" },
+    { id: "broadcast", label: "Broadcasts", count: pathwayCounts.broadcast, icon: Megaphone, tone: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" },
+    { id: "all", label: "All lanes", count: pathwayCounts.all, icon: Radio, tone: "bg-muted text-foreground" },
+  ];
+
   return (
     <div className="mx-auto max-w-[1200px] space-y-4">
       {/* v8: real-time status band */}
@@ -91,7 +143,7 @@ export default function AlertsView() {
         <span className="relative flex h-2.5 w-2.5"><span className={cn("absolute inline-flex h-full w-full rounded-full opacity-75", liveEventsEnabled ? "animate-ping bg-emerald-400" : "bg-muted-foreground/50")} /><span className={cn("relative inline-flex h-2.5 w-2.5 rounded-full", liveEventsEnabled ? "bg-emerald-500" : "bg-muted-foreground/50")} /></span>
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-bold"><Radio className="h-4 w-4 text-[#0c93e7] dark:text-[#36adf6]" />{liveEventsEnabled ? "Live monitoring is ON — alerts arrive in real time" : "Live monitoring is paused"}</div>
-          <div className="text-[10.5px] text-muted-foreground">Heartbeat every {LIVE_EVENT_INTERVAL_MS / 1000} seconds · rule engine re-checked on every data change · {liveEvents.filter(e => e.kind === "new-alert").length} live alert events this session · feed refresh #{pulse}</div>
+          <div className="text-[10.5px] text-muted-foreground">Heartbeat every {LIVE_EVENT_INTERVAL_MS / 1000} seconds · rule engine re-checked on every data change · {liveEvents.filter(e => e.kind === "new-alert").length} live alert events this session · feed refresh #{pulse} · <span className="font-semibold">{isFreshUser ? "Fresh-user pathway active" : "Demo pathway active"}</span></div>
         </div>
         <div className="ml-auto hidden max-w-[380px] items-center gap-2 md:flex">
           <div className="custom-scrollbar max-h-16 flex-1 space-y-1 overflow-y-auto rounded-lg border bg-card px-2.5 py-1.5">
@@ -117,7 +169,7 @@ export default function AlertsView() {
           <div className="mt-2"><PipelineStrip steps={[
             { label: "Data changes", hint: "Every mutation — progress edits, milestone updates, document uploads — re-evaluates the 12 alert rules." },
             { label: "Rules R1–R12", hint: "Threshold rules: overrun bands, delay probability, burn velocity, health bands, report staleness." },
-            { label: "Severity-ranked list", hint: "Worst first — each alert explains itself and carries a recommended action with owner and deadline." },
+            { label: "Pathway routing", hint: "v13: alerts are routed to the demo lane, fresh-user lane, or broadcast lane — keeping signals clean per audience." },
             { label: "Acknowledge → intervene", hint: "Acknowledge with a note (audit-logged), or convert straight into a tracked intervention." },
           ]} /></div>
         </div>
@@ -128,7 +180,46 @@ export default function AlertsView() {
           {can(user, "alert:simulate") && worst && (
             <Button size="sm" onClick={() => simulateCriticalSlip(worst.id)} className="bg-gradient-to-r from-[#7c2d12] to-[#ef4444]"><Zap className="h-3.5 w-3.5" />Simulate critical slip ({worst.psId})</Button>
           )}
+          {can(user, "alert:ack") && (
+            <Button size="sm" variant="outline" onClick={() => setBroadcastOpen(true)}><Megaphone className="h-3.5 w-3.5" />Broadcast…</Button>
+          )}
         </div>
+      </div>
+
+      {/* ─── v13: Pathway selector — separate demo / fresh-user / broadcast lanes ─── */}
+      <div className="rounded-xl border bg-card p-3">
+        <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+          <Radio className="h-3.5 w-3.5" />Alert pathway
+          <span className="ml-auto text-[10px] font-normal text-muted-foreground/80">v13: signals are routed so demo noise never reaches fresh-user accounts, and vice versa</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {pathwayTabs.map(t => {
+            const active = pathwayFilter === t.id;
+            const Icon = t.icon;
+            const disabled = t.id === "fresh" && !isFreshUser && user.role !== "ADMIN" && pathwayCounts.fresh === 0
+                          || t.id === "demo" && isFreshUser && user.role !== "ADMIN" && pathwayCounts.demo === 0;
+            return (
+              <button key={t.id} onClick={() => !disabled && setPathwayFilter(t.id)} disabled={disabled}
+                className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold transition",
+                  active ? t.tone : "bg-background text-muted-foreground hover:bg-muted", disabled && "opacity-40 cursor-not-allowed")}>
+                <Icon className="h-3.5 w-3.5" />
+                {t.label}
+                <span className={cn("ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9.5px] font-bold tabular",
+                  active ? "bg-white/25" : "bg-muted")}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {isFreshUser && (
+          <div className="mt-2 rounded-lg bg-emerald-50/60 px-3 py-1.5 text-[10.5px] text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+            You are signed in as a registered user · your pathway is <strong>fresh-user</strong> · you see your own project alerts + organisation broadcasts only · demo portfolio alerts are routed away.
+          </div>
+        )}
+        {!isFreshUser && (
+          <div className="mt-2 rounded-lg bg-[#e0effe]/60 px-3 py-1.5 text-[10.5px] text-[#015ca0] dark:bg-[#0c93e7]/10 dark:text-[#7cc8fb]">
+            You are on a demo persona · your pathway is <strong>demo</strong> · you see the 30-project seeded portfolio alerts + broadcasts only · fresh-user private alerts are routed away.
+          </div>
+        )}
       </div>
 
       {/* filters */}
@@ -149,7 +240,7 @@ export default function AlertsView() {
 
       {/* alert list */}
       <div className="space-y-2.5">
-        {list.length === 0 && <EmptyState icon={ShieldAlert} title="No alerts in this filter" body="You are all caught up — the rule engine keeps watching on every mutation and the 6-hourly cron." />}
+        {list.length === 0 && <EmptyState icon={ShieldAlert} title="No alerts in this pathway" body="You are all caught up — the rule engine keeps watching on every mutation and the 6-hourly cron. Switch pathway tabs above to see other lanes." />}
         {list.map((a, i) => (
           <motion.div key={a.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
             className={cn("rounded-xl border bg-card p-4", !a.isRead && "border-l-[3px] border-l-[#0c93e7]", fresh.includes(a.id) && "ring-2 ring-emerald-500/40")}>
@@ -157,6 +248,13 @@ export default function AlertsView() {
               <SeverityBadge severity={a.severity} />
               <span className="text-[13px] font-bold">{a.title}</span>
               <span className="rounded-full bg-muted px-2 py-0.5 text-[9.5px] font-semibold text-muted-foreground">{a.type.replace(/_/g, " ")}</span>
+              {/* v13: pathway badge */}
+              <span className={cn("rounded-full px-2 py-0.5 text-[9.5px] font-bold",
+                a.pathway === "demo" ? "bg-[#e0effe] text-[#015ca0] dark:bg-[#0c93e7]/15 dark:text-[#7cc8fb]" :
+                a.pathway === "fresh" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" :
+                "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300")}>
+                {a.pathway === "broadcast" ? "BROADCAST" : a.pathway === "fresh" ? "FRESH USER" : "DEMO"}
+              </span>
               {a.emailQueued && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[9.5px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">email queued</span>}
               <span className="ml-auto text-[10px] tabular text-muted-foreground">{relTime(a.createdAt)}</span>
             </div>
@@ -208,6 +306,7 @@ export default function AlertsView() {
           Channel policy: CRITICAL/HIGH → in-app + email ({emailSettings.provider === "smtp-gmail" ? "Gmail email service configured" : "demo outbox — configure EMAIL_USER/EMAIL_PASS for real delivery"}) + WebSocket toast; MEDIUM/LOW → in-app only.
           Current thresholds: amber {thresholds.amberAt} / red {thresholds.redAt} · budget warn {thresholds.budgetWarnPct}% / critical {thresholds.budgetCriticalPct}% · email at {thresholds.delayProbEmailAt}% probability.
           Red-band alerts always require human-officer verification (R10) before escalation.
+          <br /><span className="font-semibold">v13 pathway routing:</span> demo project alerts stay in the demo lane; registered-user project alerts route to the fresh-user lane; admin broadcasts hit both lanes.
         </div>
       </div>
 
@@ -220,6 +319,67 @@ export default function AlertsView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAck(null)}>Cancel</Button>
             <Button disabled={note.trim().length < 8} onClick={() => { acknowledgeAlert(ack!.pid, ack!.aid, note); setAck(null); toast.success("Alert acknowledged", { description: "R10 loop closed · audit-logged" }); }}><Check className="h-4 w-4" />Acknowledge</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* v13: broadcast dialog — admin can push a notification to BOTH pathways */}
+      <Dialog open={broadcastOpen} onOpenChange={setBroadcastOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="text-[15px]">Broadcast alert to all users</DialogTitle></DialogHeader>
+          <p className="text-[12px] text-muted-foreground">Sends a notification to every user — demo personas AND registered accounts. The alert appears in the Broadcasts lane for everyone.</p>
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Severity</label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map(s => (
+                  <button key={s} onClick={() => setBroadcastSev(s)} className={cn("rounded-lg border px-2 py-1.5 text-[10.5px] font-bold transition",
+                    broadcastSev === s ? "border-[#0c93e7] bg-[#e0effe]/60 dark:bg-[#0c93e7]/10" : "hover:bg-muted")}>{s}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Title</label>
+              <input value={broadcastTitle} onChange={e => setBroadcastTitle(e.target.value)} placeholder="e.g., Quarterly portfolio review meeting" className="h-9.5 w-full rounded-lg border bg-background px-3 text-[12.5px] outline-none focus:border-[#0c93e7] focus:ring-2 focus:ring-[#0c93e7]/20" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Message</label>
+              <Textarea value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} placeholder="Write the broadcast message — every user will see this in their Alerts Centre Broadcasts lane." className="min-h-20 text-[12.5px]" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBroadcastOpen(false)}>Cancel</Button>
+            <Button disabled={broadcastTitle.trim().length < 4 || broadcastMsg.trim().length < 10} onClick={() => {
+              // Inject as a synthetic broadcast alert attached to the worst project (or first available)
+              const target = worst ?? projects[0];
+              if (target) {
+                // Use existing acknowledge/simulate pathway — we push a broadcast alert
+                useApp.setState(s => ({
+                  projects: s.projects.map(p => p.id === target.id ? {
+                    ...p,
+                    alerts: [{
+                      id: `ba-${Date.now()}`,
+                      projectId: target.id,
+                      title: broadcastTitle.trim(),
+                      description: broadcastMsg.trim(),
+                      severity: broadcastSev,
+                      type: "MANUAL_BROADCAST",
+                      isRead: false,
+                      createdAt: new Date().toISOString(),
+                      recommendedAction: "Read the broadcast and confirm receipt.",
+                      recommendedOwner: user.name,
+                      recommendedDeadline: "End of day",
+                      pathway: "broadcast",
+                      emailQueued: false,
+                    }, ...p.alerts],
+                  } : p),
+                  liveEvents: [{ id: `ev-${Date.now()}`, kind: "new-alert" as const, at: new Date().toISOString(), projectId: target.id, title: `Broadcast: ${broadcastTitle.trim()}`, detail: broadcastMsg.trim() }, ...s.liveEvents].slice(0, 30),
+                }));
+              }
+              setBroadcastOpen(false);
+              setBroadcastTitle(""); setBroadcastMsg("");
+              toast.success("Broadcast sent", { description: "Notification routed to all users (demo + fresh-user lanes)" });
+            }}><Megaphone className="h-4 w-4" />Send broadcast</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
