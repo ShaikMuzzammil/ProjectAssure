@@ -1,0 +1,327 @@
+// ProjectAssure — Prisma schema (PRODUCTION: Neon PostgreSQL 16)
+// This is the canonical deployment schema. For local SQLite dev, see schema.sqlite.prisma.
+// Env: DATABASE_URL = pooled (-pooler, :6543, &pgbouncer=true) · DIRECT_URL = direct (:5432)
+// Run: bunx prisma generate && bunx prisma migrate deploy --schema prisma/schema.prisma && bun prisma/seed.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  departments Department[]
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  name           String
+  code           String   @unique
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users          User[]
+  projects       Project[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([organizationId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("VIEWER") // ADMIN | PROJECT_MANAGER | STAKEHOLDER | VIEWER
+  avatarInitials String?
+  designation  String?
+  phone        String?
+  isActive     Boolean  @default(true)
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  members      ProjectMember[]
+  tasks        Task[] @relation("assignee")
+  notifications Notification[]
+  documents    Document[]
+  auditLogs    AuditLog[]
+  @@index([departmentId])
+  @@index([role])
+}
+
+model Project {
+  id               String   @id @default(cuid())
+  psId             String   @unique
+  name             String
+  description      String?
+  status           String   @default("ACTIVE") // PLANNING|ACTIVE|ON_HOLD|COMPLETED|CANCELLED
+  healthScore      Float    @default(100)
+  healthStatus     String   @default("HEALTHY") // HEALTHY|AT_RISK|CRITICAL
+  scheduleScore    Float    @default(100)
+  budgetScore      Float    @default(100)
+  resourceScore    Float    @default(100)
+  milestoneScore   Float    @default(100)
+  healthComputedAt DateTime @default(now())
+  startDate        DateTime
+  targetDate       DateTime
+  estimatedEndDate DateTime?
+  actualEndDate    DateTime?
+  durationMonths   Int
+  progress         Float    @default(0)
+  totalBudget      Float    // ₹ lakh
+  spentBudget      Float    @default(0)
+  projectedBudget  Float    // ₹ lakh
+  state            String
+  district         String
+  latitude         Float?
+  longitude        Float?
+  sector           String
+  scheme           String?
+  departmentId     String
+  department       Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  members          ProjectMember[]
+  milestones       Milestone[]
+  tasks            Task[]
+  budgetRecords    BudgetRecord[]
+  resources        ResourceAllocation[]
+  riskAssessment   RiskAssessment?
+  predictions      PredictionResult[]
+  alerts           Alert[]
+  documents        Document[]
+  auditLogs        AuditLog[]
+  @@index([departmentId, status])
+  @@index([status, healthStatus])
+  @@index([healthStatus])
+  @@index([sector])
+  @@index([targetDate])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @default("Member") // Lead | Member | Observer
+  joinedAt  DateTime @default(now())
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model Milestone {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  status      String   @default("PENDING") // PENDING|IN_PROGRESS|COMPLETED|DELAYED|BLOCKED
+  plannedDate DateTime
+  actualDate  DateTime?
+  weight      Float    @default(1)
+  isCritical  Boolean  @default(false)
+  order       Int
+  progress    Float    @default(0)
+  tasks       Task[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([projectId])
+  @@index([projectId, status])
+  @@index([plannedDate])
+}
+
+model Task {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId   String
+  milestone     Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  name          String
+  status        String   @default("NOT_STARTED") // NOT_STARTED|IN_PROGRESS|COMPLETED|BLOCKED|CANCELLED
+  plannedStart  DateTime
+  plannedEnd    DateTime
+  actualStart   DateTime?
+  actualEnd     DateTime?
+  progress      Float    @default(0)
+  estimatedHours Float?
+  actualHours   Float?
+  isCritical    Boolean  @default(false)
+  assigneeId    String?
+  assignee      User?    @relation("assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  dependencies  TaskDependency[] @relation("task")
+  dependedBy    TaskDependency[] @relation("dependedBy")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([milestoneId])
+  @@index([milestoneId, status])
+  @@index([assigneeId])
+}
+
+model TaskDependency {
+  id            String @id @default(cuid())
+  taskId        String
+  task          Task   @relation("task", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTaskId String
+  dependsOnTask Task   @relation("dependedBy", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+  type          String @default("FINISH_TO_START")
+  createdAt     DateTime @default(now())
+  @@unique([taskId, dependsOnTaskId])
+  @@index([dependsOnTaskId])
+}
+
+model BudgetRecord {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category  String   // CONSTRUCTION|EQUIPMENT|HUMAN_RESOURCES|MATERIALS|CONSULTANCY|CONTINGENCY|LAND_ACQUISITION|OTHER
+  description String?
+  planned   Float
+  spent     Float    @default(0)
+  month     Int
+  year      Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([projectId, category, month, year])
+  @@index([projectId, year, month])
+  @@index([category])
+}
+
+model ResourceAllocation {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category  String   // HUMAN|EQUIPMENT|MATERIAL
+  name      String
+  quantity  Int
+  allocated Int
+  utilised  Float    @default(0)
+  unit      String   @default("units")
+  status    String   @default("available") // available|constrained|bottleneck
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([projectId, category])
+  @@index([category])
+}
+
+model RiskAssessment {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scheduleRisk  Float
+  budgetRisk    Float
+  resourceRisk  Float
+  overallRisk   Float
+  riskLevel     String   @default("LOW") // LOW|MEDIUM|HIGH|CRITICAL
+  factors       String   @default("[]") // JSON [{factor, impact, description}]
+  assessedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([riskLevel])
+}
+
+model PredictionResult {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  predictionType String   // delay | budget_overrun | risk_level
+  predictedValue Float
+  probability    Float
+  confidence     Float
+  ciLower        Float?
+  ciUpper        Float?
+  factors        String   @default("[]") // JSON (SHAP)
+  modelVersion   String
+  featureSnapshot String? // JSON
+  computedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  @@index([projectId, predictionType])
+  @@index([createdAt])
+}
+
+model Alert {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  description   String
+  severity      String   @default("MEDIUM") // CRITICAL|HIGH|MEDIUM|LOW
+  type          String   // RISK_LEVEL_CHANGE|BUDGET_OVERRUN|MILESTONE_SLIPPAGE|DATA_STALENESS|RESOURCE_BOTTLENECK|DELAY_PREDICTION
+  isRead        Boolean  @default(false)
+  actionTaken   String?
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  recommendedAction String
+  recommendedOwner   String
+  recommendedDeadline String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([projectId, isRead])
+  @@index([severity])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("SYSTEM") // ALERT|PREDICTION|DOCUMENT|SYSTEM|EMAIL|AUDIT
+  isRead    Boolean  @default(false)
+  linkView  String?
+  createdAt DateTime @default(now())
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileType     String   // pdf|xlsx|csv|png|jpg|txt
+  fileUrl      String?
+  fileSize     Int
+  totalPages   Int      @default(1)
+  ocrConfidence Float?
+  status       String   @default("UPLOADED") // UPLOADED|EXTRACTING|STRUCTURING|VALIDATING|PROCESSED|FAILED
+  summary      String?
+  extractedData String? // JSON {fields, keyFindings, risks, sentiment}
+  uploadedById String?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([projectId])
+  @@index([fileType])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD
+  entity    String
+  entityId  String?
+  details   String
+  before    String?
+  after     String?
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  ipAddress String?
+  createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([projectId])
+  @@index([createdAt])
+}

@@ -1,223 +1,182 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { BookOpen, BrainCircuit, Send, ShieldCheck, Sparkles, StopCircle, Wrench, X } from "lucide-react";
-import { useAppStore } from "@/store/app-store";
-import { answerQuestion, QUICK_ACTIONS, type AiAnswer } from "@/lib/projectassure/ai";
+import { useApp } from "@/store/app-store";
+import { QUICK_ACTIONS, AGENT_TOOLS } from "@/lib/projectassure/agent";
+import { AnswerBody } from "../shared/ui-bits";
+import { buildIndex } from "@/lib/projectassure/rag";
+import { can } from "@/lib/projectassure/permissions";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
+import { BrainCircuit, Send, Sparkles, Trash2, Wrench, Database, Plus, StopCircle, MessageSquare, ShieldCheck } from "lucide-react";
 
-interface Msg { role: "user" | "assistant"; text?: string; answer?: AiAnswer; streaming?: boolean; }
-
-export function AiAssistantView() {
-  const projects = useAppStore((s) => s.projects);
-  const seed = useAppStore((s) => s.aiSeedQuestion);
-  const clearSeed = useAppStore((s) => s.clearAiSeed);
-  const [messages, setMessages] = useState<Msg[]>([
-    {
-      role: "assistant",
-      text: "Namaste! I'm **Assure AI** — your agentic monitoring assistant. I reason over the live portfolio database with 6 tools (query, detail, predict, search documents, compare, report) and always show my sources.\n\nAsk me anything — for example *\"Why is Bharatmala P-4 at risk?\"* — or tap a quick action below.",
-    },
-  ]);
-  const [input, setInput] = useState("");
+export default function AiAssistantView() {
+  const user = useApp(s => s.user)!;
+  const ask = useApp(s => s.ask);
+  const threads = useApp(s => s.chatThreads);
+  const createThread = useApp(s => s.createThread);
+  const deleteThread = useApp(s => s.deleteThread);
+  const aiLiveMode = useApp(s => s.aiLiveMode);
+  // v3: live mode preference survives reload (was ephemeral → “toggle doesn't work” complaint)
+  useEffect(() => {
+    try { if (localStorage.getItem("projectassure-ai-live") === "1") useApp.setState({ aiLiveMode: true }); } catch { /* ignore */ }
+  }, []);
+  const setDataMode = useApp(s => s.setDataMode);
+  const vectorIndex = useApp(s => s.vectorIndex);
+  const projects = useApp(s => s.scoped)();
   const [busy, setBusy] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [input, setInput] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  const thread = threads[0];
 
-  const run = (question: string) => {
-    if (!question.trim() || busy) return;
-    setBusy(true);
-    setInput("");
-    setMessages((m) => [...m, { role: "user", text: question }, { role: "assistant", streaming: true }]);
+  useEffect(() => {
+    if (!threads.length) createThread();
+  }, [threads.length, createThread]);
 
-    const thinkDelay = 500 + Math.random() * 600;
-    setTimeout(() => {
-      const ans = answerQuestion(question, projects);
-      setMessages((m) => [...m.slice(0, -1), { role: "assistant", answer: ans }]);
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [thread?.messages.length, busy]);
+
+  const send = async (q?: string) => {
+    const question = (q ?? input).trim();
+    if (!question || busy) return;
+    setInput(""); setBusy(true);
+    try {
+      await ask(question);
+    } catch {
+      toast.error("Assure Intelligence hit an error answering that question", { description: "The built-in engine recovered — try rephrasing or naming a specific project." });
+    } finally {
       setBusy(false);
-    }, thinkDelay);
+    }
   };
 
-  useEffect(() => {
-    if (!seed) return;
-    const q = seed;
-    const t = setTimeout(() => { run(q); clearSeed(); }, 80);
-    return () => clearTimeout(t);
-  }, [seed]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  const full = can(user, "chat:full");
 
   return (
-    <div className="flex h-[calc(100vh-9rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-      {/* header */}
-      <div className="flex items-center justify-between border-b border-border bg-gradient-to-r from-[#f0f7ff] to-white px-5 py-3.5 dark:from-[#064f85]/25 dark:to-transparent">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0c93e7]/10 text-[#0c93e7]"><BrainCircuit className="h-5 w-5" /></div>
-          <div>
-            <p className="flex items-center gap-2 font-semibold">Assure AI <span className="rounded-full bg-[#dcfce7] px-2 py-0.5 text-[10px] font-bold text-[#15803d] dark:bg-green-500/15 dark:text-green-300">● ONLINE</span></p>
-            <p className="text-xs text-muted-foreground">Agentic reasoning · GPT-4o-class pipeline (simulated) · Gemini fallback · RAG citations</p>
+    <div className="mx-auto max-w-[1200px] space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[20px] font-bold tracking-tight">Assure Intelligence — project assistant</h1>
+          <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+            ReAct loop · 7 tools executing on live data · {vectorIndex?.chunks.length ?? 0} vector chunks · {full ? "full scope for your role" : "status questions only (viewer scope)"}
+          </p>
+        </div>
+        <div className="flex items-center gap-3 rounded-xl border bg-card px-3.5 py-2.5">
+          <div className="text-right">
+            <div className="text-[11.5px] font-bold">Live intelligence mode</div>
+            <div className="text-[10px] text-muted-foreground">{aiLiveMode ? "live intelligence service with automatic safe fallback" : "built-in engine — works offline, same grounding"}</div>
+          </div>
+          <Switch checked={aiLiveMode} onCheckedChange={v => {
+            setDataMode({ aiProvider: v ? "gemini" : "deterministic" });
+            useApp.setState({ aiLiveMode: v });
+            try { localStorage.setItem("projectassure-ai-live", v ? "1" : "0"); } catch { /* ignore */ }
+            toast.info(v ? "Live mode enabled — if the live service is unavailable it auto-falls back to the built-in engine" : "Built-in engine — fully offline, jury-safe");
+          }} />
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_290px]">
+        {/* chat */}
+        <div className="flex h-[640px] flex-col overflow-hidden rounded-xl border bg-card">
+          <div className="flex items-center gap-2.5 border-b px-4 py-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white"><BrainCircuit className="h-4.5 w-4.5" /></div>
+            <div>
+              <div className="text-[13px] font-bold">{thread?.title ?? "New conversation"}</div>
+              <div className="text-[10px] text-muted-foreground">session memory · 24h TTL · max 8 tool calls/turn · PII masked (R8)</div>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5">
+              <span className="rounded-full border px-2 py-0.5 text-[9.5px] font-semibold text-muted-foreground">threads: {threads.length}</span>
+              {threads[0] && <button onClick={() => deleteThread(threads[0].id)} title="Delete thread" className="rounded-md border p-1.5 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5 text-rose-500" /></button>}
+              <button onClick={() => createThread()} title="New thread" className="rounded-md border p-1.5 hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+
+          <div ref={listRef} className="custom-scrollbar flex-1 space-y-4 overflow-y-auto p-4">
+            {(!thread || thread.messages.length === 0) && (
+              <div className="flex h-full flex-col items-center justify-center text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white shadow-lg shadow-[#0c93e7]/25"><BrainCircuit className="h-7 w-7" /></div>
+                <div className="mt-4 text-[16px] font-bold">Ask anything about the portfolio</div>
+                <div className="mt-1 max-w-md text-[12.5px] text-muted-foreground">“Why is Bharatmala P-4 at risk?” · “Which projects in Tamil Nadu are delayed?” · “Compare budget utilisation of the top 5” · “What should I prioritise this week?”</div>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  {QUICK_ACTIONS.map(q => <button key={q} onClick={() => send(q)} className="rounded-full border px-3 py-1.5 text-[11.5px] font-medium transition hover:border-[#0c93e7]/50 hover:text-[#015ca0] dark:hover:text-[#7cc8fb]">{q}</button>)}
+                </div>
+              </div>
+            )}
+            {thread?.messages.map(m => (
+              <motion.div key={m.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={cn("flex gap-3", m.role === "user" ? "justify-end" : "")}>
+                {m.role === "assistant" && <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white"><Sparkles className="h-3.5 w-3.5" /></div>}
+                <div className={cn("max-w-[85%] rounded-xl px-3.5 py-2.5", m.role === "user" ? "bg-[#0c93e7] text-white" : "border bg-muted/25")}>
+                  {m.role === "user" ? <div className="text-[13px] leading-relaxed">{m.content}</div> : m.answer ? <AnswerBody answer={m.answer} /> : <div className="text-[13px]">{m.content}</div>}
+                </div>
+              </motion.div>
+            ))}
+            {busy && (
+              <div className="flex gap-3">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white"><Sparkles className="h-3.5 w-3.5" /></div>
+                <div className="rounded-xl border bg-muted/25 px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#0c93e7]" /><span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#0c93e7]" /><span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#0c93e7]" />
+                    <span className="ml-2 text-[10.5px] text-muted-foreground">planning → tool calls → grounding check → compose</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t p-3">
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {QUICK_ACTIONS.slice(0, 4).map(q => <button key={q} onClick={() => send(q)} disabled={busy} className="rounded-full bg-muted px-2.5 py-1 text-[10.5px] font-medium transition hover:bg-muted/70 disabled:opacity-50">{q}</button>)}
+            </div>
+            <form onSubmit={e => { e.preventDefault(); send(); }} className="flex gap-2">
+              <input value={input} onChange={e => setInput(e.target.value)} disabled={busy} placeholder={full ? "Ask about any project, document, forecast or comparison…" : "Viewer scope: status questions only (R11 scope guard)"}
+                className="h-11 flex-1 rounded-lg border bg-background px-3.5 text-[13px] outline-none transition focus:border-[#0c93e7] focus:ring-2 focus:ring-[#0c93e7]/20 disabled:opacity-60" />
+              <button type="submit" disabled={busy || !input.trim()} className="flex h-11 w-11 items-center justify-center rounded-lg bg-gradient-to-r from-[#0b426e] to-[#0c93e7] text-white shadow-sm transition hover:shadow-md disabled:opacity-40">
+                {busy ? <StopCircle className="h-4.5 w-4.5" onClick={e => { e.preventDefault(); toast.info("Turn will complete; the engine is deterministic and bounded (8 calls max)"); }} /> : <Send className="h-4.5 w-4.5" />}
+              </button>
+            </form>
           </div>
         </div>
-        <div className="hidden gap-2 text-[10px] sm:flex">
-          {["query_projects", "get_project_detail", "run_delay_prediction", "search_documents", "compare_portfolio", "generate_report"].map((t) => (
-            <span key={t} className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-muted-foreground">{t}</span>
-          ))}
+
+        {/* right rail */}
+        <div className="space-y-4">
+          <div className="rounded-xl border bg-card p-4">
+            <div className="mb-2.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground"><Wrench className="h-3.5 w-3.5" />Tool registry</div>
+            <div className="space-y-1.5">
+              {AGENT_TOOLS.map(t => (
+                <div key={t.name} className="rounded-lg border bg-muted/30 px-2.5 py-2">
+                  <div className="font-mono text-[10.5px] font-bold text-[#015ca0] dark:text-[#7cc8fb]">{t.name}</div>
+                  <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{t.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <div className="mb-2.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground"><Database className="h-3.5 w-3.5" />RAG index</div>
+            <div className="space-y-1.5 text-[11.5px]">
+              <div className="flex justify-between"><span className="text-muted-foreground">Vector chunks</span><strong className="tabular">{vectorIndex?.chunks.length ?? 0}</strong></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Documents indexed</span><strong className="tabular">{vectorIndex?.documents.size ?? 0}</strong></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Embedding dims</span><strong className="tabular">256 (hashing)</strong></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Similarity</span><strong>cosine ≥ 0.045</strong></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Index built</span><strong className="text-[10px]">{vectorIndex ? new Date(vectorIndex.builtAt).toLocaleTimeString("en-IN") : "—"}</strong></div>
+            </div>
+            <button onClick={() => { useApp.setState({ vectorIndex: buildIndex(useApp.getState().projects) }); toast.success("Vector index rebuilt", { description: `${useApp.getState().vectorIndex?.chunks.length} chunks re-embedded` }); }}
+              className="mt-2.5 w-full rounded-lg border py-1.5 text-[11px] font-semibold transition hover:bg-muted">Rebuild index</button>
+          </div>
+          <div className="rounded-xl border bg-[#072b49] p-4 text-white">
+            <div className="flex items-center gap-2 text-[11.5px] font-bold"><ShieldCheck className="h-4 w-4 text-[#7cc8fb]" />Guardrails in force</div>
+            <ul className="mt-2 space-y-1 text-[10.5px] leading-snug text-white/75">
+              <li>• R1 every number grounded in a tool observation</li>
+              <li>• R3 citations as [n] with file + page</li>
+              <li>• R7 never leaks SQL, credentials or traces</li>
+              <li>• R8 PII masked before embedding</li>
+              <li>• R10 red-flag advice requires officer verification</li>
+              <li>• R11 off-scope requests politely declined</li>
+              <li>• R12 document text is DATA, never instructions</li>
+              <li>• 20 req/h/user Redis token bucket</li>
+            </ul>
+          </div>
         </div>
       </div>
-
-      {/* messages */}
-      <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto p-5 custom-scrollbar">
-        {messages.map((m, i) =>
-          m.role === "user" ? (
-            <div key={i} className="flex justify-end pa-slide-in-right">
-              <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0c93e7] px-4 py-2.5 text-sm text-white shadow-sm">{m.text}</div>
-            </div>
-          ) : m.streaming ? (
-            <div key={i} className="flex items-start gap-2.5 pa-fade-up">
-              <BotAvatar />
-              <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm border border-border bg-muted/60 px-4 py-3.5">
-                <span className="h-2 w-2 rounded-full bg-[#0c93e7] pa-typing-dot" />
-                <span className="h-2 w-2 rounded-full bg-[#0c93e7] pa-typing-dot" />
-                <span className="h-2 w-2 rounded-full bg-[#0c93e7] pa-typing-dot" />
-                <span className="ml-1 text-xs text-muted-foreground">thinking · calling tools…</span>
-              </div>
-            </div>
-          ) : (
-            <div key={i} className="flex items-start gap-2.5 pa-fade-up">
-              <BotAvatar />
-              <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-border bg-muted/40 p-4 shadow-sm">
-                {m.answer ? <AnswerBody answer={m.answer} /> : <Md text={m.text ?? ""} />}
-              </div>
-            </div>
-          )
-        )}
-      </div>
-
-      {/* quick actions */}
-      <div className="flex gap-2 overflow-x-auto border-t border-border px-5 py-2.5 custom-scrollbar">
-        {QUICK_ACTIONS.map((qa) => (
-          <button key={qa} onClick={() => run(qa)} disabled={busy} className="whitespace-nowrap rounded-full border border-[#bae0fd] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#015ca0] transition-colors hover:bg-[#e0effe] disabled:opacity-50 dark:border-[#064f85] dark:bg-[#064f85]/15 dark:text-sky-300">
-            {qa}
-          </button>
-        ))}
-      </div>
-
-      {/* composer */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); run(input); }}
-        className="flex items-center gap-2 border-t border-border p-3.5"
-      >
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask anything — e.g. Which water projects are behind schedule?"
-          className="flex-1 rounded-xl border border-input bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#0c93e7]/50"
-        />
-        {busy ? (
-          <button type="button" onClick={() => toast("Stopped — trace cleared")} className="rounded-xl border border-input p-3 text-muted-foreground hover:bg-muted"><StopCircle className="h-5 w-5" /></button>
-        ) : (
-          <button type="submit" disabled={!input.trim()} className="rounded-xl bg-[#0c93e7] p-3 text-white shadow-sm transition-all hover:bg-[#0b426e] active:scale-95 disabled:opacity-40"><Send className="h-5 w-5" /></button>
-        )}
-      </form>
     </div>
   );
-}
-
-function BotAvatar() {
-  return <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#0c93e7] to-[#0b426e] text-white shadow"><Sparkles className="h-4 w-4" /></div>;
-}
-
-export function AnswerBody({ answer }: { answer: AiAnswer }) {
-  return (
-    <div>
-      {/* tool trace */}
-      {answer.toolCalls.length > 0 && (
-        <div className="mb-3 space-y-1.5">
-          {answer.toolCalls.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 rounded-lg border border-[#bae0fd]/70 bg-[#f0f7ff] px-3 py-1.5 text-[11px] dark:border-[#064f85] dark:bg-[#064f85]/15">
-              <Wrench className="h-3 w-3 shrink-0 text-[#0c93e7]" />
-              <span className="font-mono font-semibold text-[#015ca0] dark:text-sky-300">{t.tool}</span>
-              <span className="truncate font-mono text-muted-foreground">{t.args}</span>
-              <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">{t.durationMs}ms</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* markdown-ish body */}
-      <Md text={answer.answer} />
-      {/* citations */}
-      {answer.citations.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-2.5">
-          {answer.citations.map((c) => (
-              <span key={c.n} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground" title={c.detail}>
-              <BookOpen className="h-3 w-3 text-[#0c93e7]" />
-              <span className="font-bold text-[#0c93e7]">[{c.n}]</span> <span className="truncate">{c.label}</span>
-            </span>
-          ))}
-        </div>
-      )}
-      <p className="mt-2.5 flex items-center gap-1 text-[10px] text-muted-foreground"><ShieldCheck className="h-3 w-3" />{answer.dataFreshness} · intent: {answer.intent}</p>
-    </div>
-  );
-}
-
-/** tiny markdown renderer: **bold**, *italic*, tables, lists, headings */
-function Md({ text }: { text: string }) {
-  const lines = text.split("\n");
-  const out: React.ReactNode[] = [];
-  let tableRows: string[][] = [];
-
-  const flushTable = (key: number) => {
-    if (!tableRows.length) return;
-    const [head, ...rows] = tableRows;
-    out.push(
-      <div key={`t${key}`} className="my-2 overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/60"><tr>{head.map((h, i) => <th key={i} className="px-2.5 py-1.5 text-left font-semibold">{h}</th>)}</tr></thead>
-          <tbody>{rows.map((r, i) => <tr key={i} className="border-t border-border/60">{r.map((c, j) => <td key={j} className="px-2.5 py-1.5">{c}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
-    );
-    tableRows = [];
-  };
-
-  lines.forEach((line, i) => {
-    if (line.trim().startsWith("|")) {
-      const cells = line.split("|").slice(1, -1).map((s) => s.trim());
-      if (cells.every((c) => /^-+$/.test(c.replace(/\s/g, "")))) return; // separator
-      tableRows.push(cells);
-      return;
-    }
-    flushTable(i);
-    if (!line.trim()) { out.push(<div key={i} className="h-2" />); return; }
-    if (line.startsWith("**") && line.endsWith("**")) {
-      out.push(<p key={i} className="mb-1 text-sm font-bold">{inline(line)}</p>); return;
-    }
-    if (line.startsWith("- ")) {
-      out.push(<p key={i} className="flex gap-2 text-sm leading-relaxed"><span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#0c93e7]" /><span>{inline(line.slice(2))}</span></p>); return;
-    }
-    if (/^\d+\. /.test(line)) {
-      const n = line.match(/^(\d+)\. /)![1];
-      out.push(<p key={i} className="flex gap-2 text-sm leading-relaxed"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#e0effe] text-[9px] font-bold text-[#015ca0]">{n}</span><span>{inline(line.replace(/^\d+\. /, ""))}</span></p>); return;
-    }
-    out.push(<p key={i} className="text-sm leading-relaxed">{inline(line)}</p>);
-  });
-  flushTable(999);
-  return <div className="space-y-0.5">{out}</div>;
-}
-
-function inline(s: string): React.ReactNode {
-  const parts: React.ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_)/g;
-  let last = 0, m: RegExpExecArray | null, k = 0;
-  while ((m = re.exec(s))) {
-    if (m.index > last) parts.push(s.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith("**")) parts.push(<strong key={k++} className="font-bold">{tok.slice(2, -2)}</strong>);
-    else parts.push(<em key={k++} className="italic">{tok.slice(1, -1)}</em>);
-    last = m.index + tok.length;
-  }
-  if (last < s.length) parts.push(s.slice(last));
-  return parts;
 }

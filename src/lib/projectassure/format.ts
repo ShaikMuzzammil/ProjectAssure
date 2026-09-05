@@ -1,73 +1,76 @@
-/* ============================================================
- * ProjectAssure — formatting helpers
- * Indian digit grouping, INR crore/lakh, dates per doc 06 rules
- * ============================================================ */
+// ProjectAssure — formatting helpers (Indian conventions per spec R4/R5)
 
-/** 14500 (lakhs) -> "₹14,500.00 L" ; >= 100 lakhs shows crore too */
-export function formatLakhs(lakhs: number, opts?: { compact?: boolean }): string {
-  if (lakhs >= 100) {
-    const cr = lakhs / 100;
-    if (opts?.compact && cr >= 1000) return `₹${formatIndian(Math.round(cr))} Cr`;
-    return `₹${formatIndian(Number(cr.toFixed(2)))} Cr`;
-  }
-  return `₹${formatIndian(Number(lakhs.toFixed(2)))} L`;
+export function inr(value: number, unit: "lakhs" | "auto" = "auto"): string {
+  if (unit === "lakhs") return `₹${value.toLocaleString("en-IN")} L`;
+  if (value >= 100000) return `₹${Math.round(value / 100).toLocaleString("en-IN")} Cr`;
+  if (value >= 100) return `₹${(value / 100).toFixed(1)} Cr`;
+  return `₹${Math.round(value)} L`;
 }
 
-export function formatIndian(n: number): string {
-  const neg = n < 0;
-  const s = Math.abs(n).toString();
-  let [int, dec] = s.split(".");
-  if (int.length > 3) {
-    const last3 = int.slice(-3);
-    const rest = int.slice(0, -3);
-    int = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
-  }
-  return (neg ? "-" : "") + int + (dec ? "." + dec : "");
+export function inrFull(value: number): string {
+  return `₹${value.toLocaleString("en-IN")} lakh`;
 }
 
-export function formatPct(n: number, digits = 0): string {
-  return `${n.toFixed(digits)}%`;
+export function pct(value: number, digits = 0): string {
+  return `${value.toFixed(digits)}%`;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** DD Mon YYYY (doc 06 rule: DD Mon YYYY) */
-export function formatDate(iso: string | Date): string {
+export function shortDate(iso: string | Date): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
-  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-export function formatDateTime(iso: string | Date): string {
+export function dateTime(iso: string | Date): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${formatDate(d)} · ${hh}:${mm} IST`;
+  return `${shortDate(d)} · ${d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} IST`;
 }
 
-export function monthLabel(month: number, year: number): string {
-  return `${MONTHS[month - 1]} ${String(year).slice(2)}`;
+export function monthName(m: number): string {
+  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][((m - 1) % 12 + 12) % 12];
 }
 
-export function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+export function monthLabel(m: number, y: number): string {
+  return `${monthName(m)} ${String(y).slice(2)}`;
+}
+
+export function relTime(iso: string | Date, now = new Date()): string {
+  const t = typeof iso === "string" ? new Date(iso).getTime() : iso.getTime();
+  const diff = Math.max(0, now.getTime() - t);
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
+  if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hr${hrs > 1 ? "s" : ""} ago`;
+  if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
-  return `${days} day${days > 1 ? "s" : ""} ago`;
+  if (days < 30) return `${days}d ago`;
+  return shortDate(new Date(t));
 }
 
-export function daysUntil(iso: string): number {
-  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+export function bytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+export function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+export function daysBetween(a: string | Date, b: string | Date): number {
+  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
+}
+
+export function addDays(iso: string | Date, days: number): Date {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+export function uid(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function fiscalYear(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  return d.getMonth() >= 3 ? `FY ${y}-${String(y + 1).slice(2)}` : `FY ${y - 1}-${String(y).slice(2)}`;
 }

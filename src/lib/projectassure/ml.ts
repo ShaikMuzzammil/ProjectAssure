@@ -1,292 +1,354 @@
-/* ============================================================
- * ProjectAssure — Simulated ML engine (client-side)
- * Implements md/06_AI_ML_ENGINE.md:
- *  - Health score = 0.30*Schedule + 0.25*Budget + 0.20*Resources + 0.25*Milestones
- *  - 18-feature delay model -> log-odds -> sigmoid probability
- *  - Progress-deficit delay estimator + 90% CI
- *  - Prophet-style budget extrapolation + overrun detection
- * Model badge: "sim:xgboost-v2.1-18f" (prototype calibration)
- * ============================================================ */
+// ═══════════════════════════════════════════════════════════════════════════
+// ProjectAssure — ML Engine (deterministic in-browser simulation of the
+// production stack: predictive delay engine + cost forecaster +
+// factor-attribution explainability). Implements the exact documented formulas.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { Project, PredictionFactor, PredictionResult, ModelVersion, ThresholdSettings } from "./types";
+import { HEALTH_WEIGHTS } from "./types";
+import { clamp } from "./format";
+import { ANCHOR } from "./doc-corpus";
 
-import type { BudgetRecord, Milestone, PredictionFactor, PredictionResult, Project, ResourceAllocation, Task } from "./types";
+export const MODEL_VERSION = "AssurePredict 2.3";
 
-export const MODEL_VERSION = "sim:xgboost-v2.1-18f";
-export const HEALTH_WEIGHTS = { schedule: 0.30, budget: 0.25, resources: 0.20, milestones: 0.25 };
-
-export interface MlFeatures {
-  task_completion_rate: number;
-  milestone_adherence: number;
-  days_behind_schedule: number;
-  budget_utilisation_rate: number;
-  budget_burn_velocity: number;
-  budget_velocity_deviation: number;
-  critical_milestones_delayed: number;
-  total_milestones_delayed: number;
-  dependency_chain_health: number;
-  resource_utilisation: number;
-  resource_bottleneck_count: number;
-  days_to_deadline: number;
-  project_duration_months: number;
-  elapsed_ratio: number;
-  progress_vs_elapsed: number;
-  weather_seasonality: number;
-  procurement_delay_days: number;
-  team_size_adequacy: number;
-}
+export const MODEL_REGISTRY: ModelVersion[] = [
+  {
+    version: "AssurePredict 2.3",
+    trainedAt: "2026-08-24T03:00:00+05:30",
+    trainedOn: 5000,
+    metrics: { auc: 0.912, accuracy: 0.842, precision: 0.814, recall: 0.831, f1: 0.822, maeDays: 18.4, brier: 0.118, ece: 0.041 },
+    status: "champion",
+    notes: "18 risk signals, calibrated , Auto-tuned over 50 trials. Current production candidate.",
+  },
+  {
+    version: "AssurePredict 2.2",
+    trainedAt: "2026-06-11T03:00:00+05:30",
+    trainedOn: 4200,
+    metrics: { auc: 0.889, accuracy: 0.821, precision: 0.798, recall: 0.804, f1: 0.801, maeDays: 21.7, brier: 0.134, ece: 0.058 },
+    status: "retired",
+    notes: "Champion until Aug 2026; retired after drift >0.2 drift trigger on procurement features.",
+  },
+];
 
 export const FEATURE_LABELS: Record<string, string> = {
   task_completion_rate: "Task completion rate",
   milestone_adherence: "Milestone adherence",
   days_behind_schedule: "Days behind schedule",
-  budget_utilisation_rate: "Budget utilisation",
-  budget_burn_velocity: "Burn velocity (3-mo avg)",
-  budget_velocity_deviation: "Velocity deviation",
+  budget_utilisation_rate: "Budget utilisation rate",
+  budget_burn_velocity: "Budget burn velocity",
+  budget_velocity_deviation: "Burn velocity deviation",
   critical_milestones_delayed: "Critical milestones delayed",
-  total_milestones_delayed: "Milestones delayed",
-  dependency_chain_health: "Dependency chain health",
+  total_milestones_delayed: "Total milestones delayed",
+  dependency_chain_health: "Dependency-chain health",
   resource_utilisation: "Resource utilisation",
-  resource_bottleneck_count: "Bottlenecked resources",
+  resource_bottleneck_count: "Resource bottlenecks",
   days_to_deadline: "Days to deadline",
-  project_duration_months: "Duration class",
-  elapsed_ratio: "Elapsed timeline ratio",
+  project_duration_months: "Project duration (months)",
+  elapsed_ratio: "Elapsed ratio",
   progress_vs_elapsed: "Progress vs elapsed",
   weather_seasonality: "Monsoon seasonality",
   procurement_delay_days: "Procurement pending days",
   team_size_adequacy: "Team size adequacy",
 };
 
-const DAY = 86400000;
-const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const NOW = new Date();
+export interface MlFeatures {
+  task_completion_rate: number; milestone_adherence: number; days_behind_schedule: number;
+  budget_utilisation_rate: number; budget_burn_velocity: number; budget_velocity_deviation: number;
+  critical_milestones_delayed: number; total_milestones_delayed: number; dependency_chain_health: number;
+  resource_utilisation: number; resource_bottleneck_count: number; days_to_deadline: number;
+  project_duration_months: number; elapsed_ratio: number; progress_vs_elapsed: number;
+  weather_seasonality: number; procurement_delay_days: number; team_size_adequacy: number;
+}
 
-/* ── feature extraction (18 features from live data) ────── */
-export function extractFeatures(p: Project): MlFeatures {
-  const now = Date.now();
+const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
+
+export function extractFeatures(p: Project, now: Date = ANCHOR): MlFeatures {
   const start = new Date(p.startDate).getTime();
   const target = new Date(p.targetDate).getTime();
-  const durationDays = Math.max(30, (target - start) / DAY);
-  const elapsed = clamp((now - start) / (durationDays * DAY), 0.02, 1.2);
-  const daysToDeadline = Math.round((target - now) / DAY);
-  const daysBehind = Math.max(0, Math.round((p.progress / 100 - elapsed) * durationDays));
+  const nowT = now.getTime();
+  const durationDays = Math.max(30, (target - start) / 86400000);
+  const elapsed = clamp((nowT - start) / (target - start), 0, 1);
+  const daysToDeadline = Math.max(0, Math.round((target - nowT) / 86400000));
 
-  const tasks: Task[] = p.tasks;
-  const completedTasks = tasks.filter((t) => t.status === "COMPLETED").length;
-  const taskCompletion = tasks.length ? completedTasks / tasks.length : p.progress / 100;
+  const tasks = p.tasks.filter(t => t.status !== "CANCELLED");
+  const doneTasks = tasks.filter(t => t.status === "COMPLETED").length;
+  const taskCompletion = tasks.length ? doneTasks / tasks.length : 0;
 
-  const dueMilestones = p.milestones.filter((m) => new Date(m.plannedDate).getTime() <= now);
-  const onTime = dueMilestones.filter((m) => m.status === "COMPLETED" || (m.status === "IN_PROGRESS" && m.progress > 50));
-  const milestoneAdherence = dueMilestones.length ? onTime.length / dueMilestones.length : 1;
-  const delayedMs = p.milestones.filter((m) => m.status === "DELAYED" || m.status === "BLOCKED");
-  const criticalDelayed = delayedMs.filter((m) => m.isCritical).length;
+  const ms = p.milestones;
+  const dueMs = ms.filter(m => new Date(m.plannedDate).getTime() <= nowT + 30 * 86400000);
+  const onTime = dueMs.filter(m => m.status === "COMPLETED" && (!m.actualDate || new Date(m.actualDate) <= new Date(m.plannedDate))).length;
+  const adherence = dueMs.length ? onTime / dueMs.length : 1;
+  const delayedMs = ms.filter(m => m.status === "DELAYED" || m.status === "BLOCKED");
+  const criticalDelayed = delayedMs.filter(m => m.isCritical).length;
 
-  const budgetUtil = p.totalBudget ? p.spentBudget / p.totalBudget : 0;
-  const burn3m = avgLast3Burn(p.budgetRecords);
-  const planned3m = avgLast3Planned(p.budgetRecords);
-  const burnVel = planned3m > 0 ? burn3m / planned3m : 1;
+  // dependency chain health: share of tasks whose dependencies completed on time
+  const blockedByDeps = tasks.filter(t => t.dependsOn.some(d => {
+    const dep = tasks.find(x => x.id === d);
+    return dep ? dep.status !== "COMPLETED" : false;
+  })).length;
+  const depHealth = tasks.length ? clamp(1 - blockedByDeps / tasks.length * 1.6, 0, 1) : 1;
 
-  const resUtil = p.resources.length ? avg(p.resources.map((r) => r.utilised)) / 100 : 0.75;
-  const bottlenecks = p.resources.filter((r) => r.utilised > 90).length;
+  const spent = p.spentBudget;
+  const util = p.totalBudget > 0 ? spent / p.totalBudget : 0;
+  const last3 = p.budgetRecords.slice(-3);
+  const burnVel = last3.length ? last3.reduce((s, r) => s + r.spent, 0) / last3.length : 0;
+  const planVel = last3.length ? last3.reduce((s, r) => s + r.planned, 0) / last3.length : 1;
+  const velDev = planVel > 0 ? (burnVel - planVel) / planVel : 0;
 
-  const monsoon = NOW.getMonth() >= 5 && NOW.getMonth() <= 8 ? 1 : 0;
+  const res = p.resources;
+  const utilisation = res.length ? res.reduce((s, r) => s + r.utilised, 0) / res.length / 100 : 0.6;
+  const bottlenecks = res.filter(r => r.utilised > 90).length;
 
-  const procurementDays = p.status === "ACTIVE" && delayedMs.length > 0 ? Math.round(6 + delayedMs.length * 4 + (p.healthStatus === "CRITICAL" ? 8 : 0)) : clamp(Math.round(randJitter(p.id, "proc") * 6), 0, 12);
-  const teamAdequacy = clamp(0.72 + (p.resourceScore / 100) * 0.35, 0.5, 1.05);
-  const depHealth = clamp(1 - delayedMs.length * 0.14, 0.05, 1);
+  // v4: early-phase neutrality — a project in its first ~1 month (or still
+  // before its start date) has no slippage *evidence* yet. Penalising a
+  // day-0 project to "At Risk 69" made new projects look broken the moment
+  // they were created. Treat no-evidence as neutral, not as failure.
+  const earlyPhase = elapsed < 0.04 || p.status === "PLANNING" && elapsed < 0.12;
+  const progressVsElapsed = earlyPhase ? 1 : (elapsed > 0 ? p.progress / 100 / elapsed : 1);
+  const daysBehind = earlyPhase ? 0 : Math.max(0, Math.round((1 - clamp(progressVsElapsed, 0, 1.5)) * durationDays * elapsed));
+
+  const month = now.getMonth() + 1;
+  const monsoon = month >= 6 && month <= 9 ? 1 : 0;
+  const procurement = 4 + criticalDelayed * 7 + delayedMs.length * 3 + (p.status === "ON_HOLD" ? 20 : 0);
+  const teamAdequacy = clamp(0.72 + p.resourceScore * 0.0035, 0.5, 1.05);
 
   return {
-    task_completion_rate: round2(taskCompletion),
-    milestone_adherence: round2(milestoneAdherence),
-    days_behind_schedule: Math.max(0, daysBehind),
-    budget_utilisation_rate: round2(budgetUtil),
-    budget_burn_velocity: round2(burn3m),
-    budget_velocity_deviation: round2(burnVel - 1),
+    task_completion_rate: +taskCompletion.toFixed(3),
+    milestone_adherence: +adherence.toFixed(3),
+    days_behind_schedule: daysBehind,
+    budget_utilisation_rate: +util.toFixed(3),
+    budget_burn_velocity: +burnVel.toFixed(1),
+    budget_velocity_deviation: +velDev.toFixed(3),
     critical_milestones_delayed: criticalDelayed,
     total_milestones_delayed: delayedMs.length,
-    dependency_chain_health: round2(depHealth),
-    resource_utilisation: round2(resUtil),
+    dependency_chain_health: +depHealth.toFixed(3),
+    resource_utilisation: +utilisation.toFixed(3),
     resource_bottleneck_count: bottlenecks,
     days_to_deadline: daysToDeadline,
-    project_duration_months: Math.round(durationDays / 30),
-    elapsed_ratio: round2(elapsed),
-    progress_vs_elapsed: round2(elapsed > 0 ? p.progress / 100 / elapsed : 1),
+    project_duration_months: p.durationMonths,
+    elapsed_ratio: +elapsed.toFixed(3),
+    progress_vs_elapsed: +clamp(progressVsElapsed, 0, 1.5).toFixed(3),
     weather_seasonality: monsoon,
-    procurement_delay_days: procurementDays,
-    team_size_adequacy: round2(teamAdequacy),
+    procurement_delay_days: procurement,
+    team_size_adequacy: +teamAdequacy.toFixed(3),
   };
 }
 
-const round2 = (v: number) => Math.round(v * 100) / 100;
-const avg = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+// ─── Health score — exact documented sub-score formulas ─────────────────────
+export interface HealthScores { schedule: number; budget: number; resources: number; milestones: number; overall: number; }
 
-function avgLast3Burn(records: BudgetRecord[]): number {
-  const last = records.slice(-3);
-  return last.length ? avg(last.map((r) => r.spent)) : 0;
-}
-function avgLast3Planned(records: BudgetRecord[]): number {
-  const last = records.slice(-3);
-  return last.length ? avg(last.map((r) => r.planned)) : 0;
-}
-/* deterministic jitter from string id */
-function randJitter(id: string, salt: string): number {
-  let h = 2166136261;
-  const s = id + salt;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return ((h >>> 0) % 1000) / 1000;
+export function computeHealth(p: Project, now: Date = ANCHOR): HealthScores {
+  const f = extractFeatures(p, now);
+  const progress = p.progress / 100;
+
+  // Schedule = 100 × (0.50·PR + 0.50·TD)
+  const PR = Math.min(1, f.progress_vs_elapsed);
+  const TD = Math.max(0, 1 - f.days_behind_schedule / 90);
+  const schedule = 100 * (0.5 * PR + 0.5 * TD);
+
+  // Budget = 100 × (0.35·BR + 0.25·VR + 0.40·OR)
+  const overrunPct = p.totalBudget > 0 ? Math.max(0, (p.projectedBudget - p.totalBudget) / p.totalBudget * 100) : 0;
+  // v4: burn-rate neutrality in the first weeks — ₹0 spent with ~0 elapsed is
+  // "no evidence yet", not a 0/1 burn mismatch (new projects scored BUDGET 40).
+  const burnRatio = f.elapsed_ratio > 0.04 ? f.budget_utilisation_rate / f.elapsed_ratio : 1;
+  const BR = Math.max(0, 1 - Math.abs(burnRatio - 1) / 0.25);
+  const VR = Math.max(0, 1 - Math.abs(f.budget_velocity_deviation) / 0.35);
+  const OR = Math.max(0, 1 - overrunPct / 15);
+  const budget = 100 * (0.35 * BR + 0.25 * VR + 0.4 * OR);
+
+  // Resources = 100 × (0.45·UB + 0.30·BN + 0.25·TA)
+  const UB = f.resource_utilisation > 0.85
+    ? 1 - Math.max(0, (f.resource_utilisation - 0.85) / 0.15)
+    : 1 - Math.max(0, (0.6 - f.resource_utilisation) / 0.6);
+  const BN = Math.max(0, 1 - f.resource_bottleneck_count / 5);
+  const TA = Math.min(1, f.team_size_adequacy);
+  const resources = 100 * (0.45 * UB + 0.3 * BN + 0.25 * TA);
+
+  // Milestones = 100 × (0.45·MA + 0.35·SS + 0.20·CD)
+  const MA = f.milestone_adherence;
+  const SS = Math.max(0, 1 - f.total_milestones_delayed / 4);
+  const CD = Math.max(0, 1 - f.critical_milestones_delayed / 2);
+  const milestones = 100 * (0.45 * MA + 0.35 * SS + 0.2 * CD);
+
+  const overall =
+    HEALTH_WEIGHTS.schedule * schedule +
+    HEALTH_WEIGHTS.budget * budget +
+    HEALTH_WEIGHTS.resources * resources +
+    HEALTH_WEIGHTS.milestones * milestones;
+
+  return {
+    schedule: clamp(schedule, 0, 100), budget: clamp(budget, 0, 100),
+    resources: clamp(resources, 0, 100), milestones: clamp(milestones, 0, 100),
+    overall: clamp(overall, 0, 100),
+  };
 }
 
-/* ── pseudo-SHAP contributions ──────────────────────────── */
-interface Contribution { feature: keyof MlFeatures; w: number; bad: (v: number) => boolean; fmt: (v: number) => string; why: string; }
+export function healthBand(score: number, t: ThresholdSettings): "HEALTHY" | "AT_RISK" | "CRITICAL" {
+  if (score >= t.amberAt) return "HEALTHY";
+  if (score >= t.redAt) return "AT_RISK";
+  return "CRITICAL";
+}
 
-const CONTRIBUTIONS: Contribution[] = [
-  { feature: "days_behind_schedule", w: 0.030, bad: (v) => v > 10, fmt: (v) => `${v} days behind`, why: "schedule drift is the strongest single predictor in the model" },
-  { feature: "progress_vs_elapsed", w: -2.6, bad: (v) => v < 0.9, fmt: (v) => `${v.toFixed(2)} (target ≥ 0.95)`, why: "progress is falling behind the elapsed clock" },
-  { feature: "critical_milestones_delayed", w: 0.34, bad: (v) => v > 0, fmt: (v) => `${v} critical milestone(s) delayed`, why: "critical-path blockage freezes downstream work" },
-  { feature: "budget_velocity_deviation", w: 1.9, bad: (v) => Math.abs(v) > 0.15, fmt: (v) => `${(v * 100).toFixed(0)}% vs plan`, why: "spending momentum has diverged from plan" },
-  { feature: "milestone_adherence", w: -1.7, bad: (v) => v < 0.8, fmt: (v) => `${(v * 100).toFixed(0)}% on-time`, why: "contractual milestone commitments are slipping" },
-  { feature: "procurement_delay_days", w: 0.045, bad: (v) => v > 10, fmt: (v) => `${v} days pending`, why: "procurement is the most common hard blocker in public projects" },
-  { feature: "weather_seasonality", w: 0.42, bad: (v) => v > 0, fmt: (v) => v ? "Jun-Sep monsoon window" : "off-monsoon", why: "India-specific seasonal interruption factor" },
-  { feature: "resource_bottleneck_count", w: 0.22, bad: (v) => v > 0, fmt: (v) => `${v} bottlenecked`, why: "utilisation above 90% predicts queueing delays" },
-  { feature: "task_completion_rate", w: -1.35, bad: (v) => v < 0.5, fmt: (v) => `${(v * 100).toFixed(0)}% tasks done`, why: "direct evidence of work actually done" },
-  { feature: "dependency_chain_health", w: -1.5, bad: (v) => v < 0.7, fmt: (v) => `${(v * 100).toFixed(0)}% chains healthy`, why: "broken hand-offs freeze downstream tasks" },
-  { feature: "team_size_adequacy", w: -1.1, bad: (v) => v < 0.8, fmt: (v) => `${(v * 100).toFixed(0)}% staffed`, why: "understaffing below 80% precedes slippage" },
-  { feature: "days_to_deadline", w: -0.0018, bad: (v) => v < 90, fmt: (v) => `${v} days left`, why: "remaining runway interacts with every other factor" },
+// ─── Delay prediction (XGBoost surrogate: base + Σ factor-style log-odds) ──────
+interface FactorSpec {
+  feature: keyof MlFeatures;
+  weight: number;
+  bad: (v: number) => boolean;
+  scale: (v: number) => number;
+  cap: number;
+  fmt: (v: number) => string;
+  why: string;
+}
+
+const FACTOR_SPECS: FactorSpec[] = [
+  { feature: "days_behind_schedule", weight: 0.032, bad: v => v > 5, scale: v => Math.min(2.4, v * 0.028), cap: 2.4, fmt: v => `${v} days behind`, why: "Schedule gap compounds: catching up needs 30%+ higher output, rarely achieved on infrastructure works." },
+  { feature: "progress_vs_elapsed", weight: 0.9, bad: v => v < 0.92, scale: v => clamp((1 - v) * 7.5, 0, 2.4), cap: 2.4, fmt: v => `${Math.round(v * 100)}% of expected pace`, why: "Physical progress is trailing elapsed time — the single most reliable leading indicator of a missed date." },
+  { feature: "procurement_delay_days", weight: 0.045, bad: v => v > 10, scale: v => Math.min(1.4, v * 0.042), cap: 1.4, fmt: v => `${v} days pending`, why: "Material/indents pending beyond lead time lock downstream activity sequences." },
+  { feature: "milestone_adherence", weight: 0.9, bad: v => v < 0.95, scale: v => clamp((0.95 - v) * 5.2, 0, 1.8), cap: 1.8, fmt: v => `${Math.round(v * 100)}% on time`, why: "Missed milestones deplete float and push the critical path even when overall progress looks close to plan." },
+  { feature: "budget_velocity_deviation", weight: 0.4, bad: v => Math.abs(v) > 0.12, scale: v => clamp(Math.abs(v) * 4.6, 0, 1.5), cap: 1.5, fmt: v => `${v > 0 ? "+" : ""}${Math.round(v * 100)}% vs plan`, why: "Burn running ahead of physical achievement is the classic signature of schedule-driven cost overruns." },
+  { feature: "critical_milestones_delayed", weight: 0.55, bad: v => v >= 1, scale: v => Math.min(1.6, v * 0.55), cap: 1.6, fmt: v => `${v} critical`, why: "Critical-path milestones have zero float — every day lost moves the end date directly." },
+  { feature: "weather_seasonality", weight: 0.42, bad: v => v === 1, scale: v => v * 0.42, cap: 0.42, fmt: v => (v ? "monsoon active" : "clear season"), why: "Jun–Sep rainfall halts earthwork and concrete pours; historical loss is 8–14 working days per month." },
+  { feature: "resource_bottleneck_count", weight: 0.3, bad: v => v >= 1, scale: v => Math.min(1.1, v * 0.3), cap: 1.1, fmt: v => `${v} at >90%`, why: "Plant/machinery running above 90% leaves no catch-up capacity for re-sequencing." },
+  { feature: "budget_utilisation_rate", weight: 0.9, bad: v => v > 0.9 || v < 0.15, scale: v => v > 0.9 ? (v - 0.9) * 6 : (0.15 - v) * 4, cap: 0.8, fmt: v => `${Math.round(v * 100)}% spent`, why: "Money consumed out of proportion to work done signals estimation error or idle charges." },
+  { feature: "task_completion_rate", weight: 1.2, bad: v => v < 0.7, scale: v => (0.7 - v) * 1.2, cap: 0.6, fmt: v => `${Math.round(v * 100)}% tasks done`, why: "Low activity closure rate precedes milestone slippage by 4–8 weeks." },
+  { feature: "dependency_chain_health", weight: 1.3, bad: v => v < 0.9, scale: v => (0.9 - v) * 1.3, cap: 0.9, fmt: v => `${Math.round(v * 100)}% unblocked`, why: "Blocked dependency chains stall entire work fronts, not just single activities." },
+  { feature: "team_size_adequacy", weight: 1.1, bad: v => v < 0.85, scale: v => (0.85 - v) * 1.1, cap: 0.5, fmt: v => `${Math.round(v * 100)}% adequacy`, why: "Understaffed fronts cannot absorb any further disruption without slipping." },
 ];
 
-export function computeDelayPrediction(p: Project): PredictionResult {
-  const f = extractFeatures(p);
-  const atRiskStory = p.healthStatus !== "HEALTHY";
+export function computeDelayPrediction(p: Project, modelVersion = MODEL_VERSION, now: Date = ANCHOR): PredictionResult {
+  const f = extractFeatures(p, now);
+  const isStory = p.story ? p.story.tier === "A" || p.story.tier === "C" : false;
+  const damp = isStory ? 1 : 0.4; // healthy portfolio projects get damped contributions
 
-  /* base margin: healthy projects sit deep in negative territory */
-  let margin = -2.35 + (100 - p.healthScore) / 55; // range roughly -2.35..-0.9
+  let margin = -2.35 + (100 - p.healthScore) / 55;
   const factors: PredictionFactor[] = [];
-
-  for (const c of CONTRIBUTIONS) {
-    const v = f[c.feature];
-    let contribution = 0;
-    if (c.bad(v)) {
-      /* magnitude scales with severity of the "badness" */
-      contribution = Math.abs(c.w) * (atRiskStory ? 1 : 0.4);
-      if (c.feature === "days_behind_schedule") contribution = Math.min(2.2, v * 0.028);
-      if (c.feature === "progress_vs_elapsed") contribution = clamp((1 - v) * 7.5, 0, 2.4) * (atRiskStory ? 1 : 0.35);
-      if (c.feature === "procurement_delay_days") contribution = Math.min(1.4, v * 0.042) * (atRiskStory ? 1 : 0.3);
-      if (c.feature === "milestone_adherence") contribution = clamp((0.95 - v) * 5.2, 0, 1.8) * (atRiskStory ? 1 : 0.3);
-      if (c.feature === "budget_velocity_deviation") contribution = clamp(Math.abs(v) * 4.6, 0, 1.5) * (atRiskStory ? 1 : 0.3);
-      if (c.feature === "weather_seasonality") contribution = v * 0.42 * (atRiskStory ? 1 : 0.35);
-      if (c.feature === "critical_milestones_delayed") contribution = Math.min(1.6, v * 0.55) * (atRiskStory ? 1 : 0.3);
-    }
-    contribution = Math.round(contribution * 1000) / 1000;
-    if (contribution !== 0 || c.feature === "progress_vs_elapsed") {
-      factors.push({
-        feature: c.feature, label: FEATURE_LABELS[c.feature], value: v,
-        contribution, plainLanguage: `${c.fmt(v)} — ${c.why}`,
-      });
-    }
+  for (const spec of FACTOR_SPECS) {
+    const v = f[spec.feature];
+    if (!spec.bad(v)) continue;
+    const contribution = clamp(spec.scale(v), 0, spec.cap) * (damp === 1 ? 1 : damp);
+    if (contribution <= 0.02) continue;
     margin += contribution;
+    factors.push({
+      feature: spec.feature, label: FEATURE_LABELS[spec.feature],
+      value: v, valueLabel: spec.fmt(v), contribution: +contribution.toFixed(2),
+      direction: "raises", plainLanguage: spec.why,
+    });
+  }
+  // one mitigating factor for realism
+  if (f.task_completion_rate > 0.8) {
+    margin -= 0.13;
+    factors.push({ feature: "task_completion_rate", label: FEATURE_LABELS.task_completion_rate, value: f.task_completion_rate, valueLabel: `${Math.round(f.task_completion_rate * 100)}% tasks done`, contribution: -0.13, direction: "lowers", plainLanguage: "Strong activity closure rate gives the contractor re-sequencing headroom." });
   }
 
-  /* blend feature-driven sigmoid with a health-score prior
-     (calibration: health 58 ≈ 78%, health 75 ≈ 17%, health 90 ≈ 3%) */
+  // calibrated blend: model + health prior
   const pModel = sigmoid(margin);
   const pHealth = sigmoid((62 - p.healthScore) / 7);
   const probability = clamp(0.3 * pModel + 0.7 * pHealth, 0.02, 0.985);
-  const deficit = Math.max(0, (1 - f.progress_vs_elapsed) * f.days_to_deadline);
+
+  const deficit = Math.max(0, (1 - clamp(f.progress_vs_elapsed, 0, 1)) * f.days_to_deadline);
   const estimatedDays = Math.round(clamp(deficit, 4, 240) * (0.5 + 0.6 * probability));
   const ciWidth = Math.round(estimatedDays * 0.32 + 6);
-  const confidence = round2(clamp(0.62 + (f.progress_vs_elapsed < 1 ? 0.14 : 0.06) + (atRiskStory ? 0.1 : 0.05) - Math.abs(probability - 0.5) * 0.18, 0.5, 0.93));
+  const confidence = clamp(
+    0.62 + (p.prediction ? 0.14 : 0.06) + (isStory ? 0.1 : 0.05) - Math.abs(probability - 0.5) * 0.18,
+    0.5, 0.93,
+  );
 
   factors.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
 
   return {
-    id: `${p.id}-pred`, projectId: p.id, predictionType: "delay",
-    probability: Math.round(probability * 1000) / 1000,
-    estimatedDays, ciLower: Math.max(1, estimatedDays - ciWidth), ciUpper: estimatedDays + ciWidth,
-    confidence, factors: factors.slice(0, 6), modelVersion: MODEL_VERSION,
+    id: `pred-${p.id}-${Date.now().toString(36)}`,
+    projectId: p.id,
+    predictionType: "delay",
+    probability: +probability.toFixed(3),
+    estimatedDays,
+    ciLower: Math.max(2, estimatedDays - ciWidth),
+    ciUpper: estimatedDays + ciWidth,
+    confidence: +confidence.toFixed(2),
+    factors: factors.slice(0, 6),
+    modelVersion,
     computedAt: new Date().toISOString(),
+    featureSnapshot: f as unknown as Record<string, number>,
   };
 }
 
-/* ── budget forecast (Prophet-style extrapolation) ──────── */
-export interface ForecastPoint { month: string; planned: number; actual: number | null; projected: number | null; upper: number | null; lower: number | null; }
+// ─── Budget forecast (seasonality + confidence interval surrogate) ────────
+export interface ForecastPoint { month: number; year: number; planned: number; actual: number | null; projected: number; lower: number; upper: number; }
+export interface BudgetForecast { points: ForecastPoint[]; projectedFinal: number; overrunPct: number; monthlyBurn: number; breachMonth?: string; }
 
-export function computeBudgetForecast(p: Project): { points: ForecastPoint[]; projectedFinal: number; overrunPct: number; months: number; } {
-  const recs = p.budgetRecords;
-  const totalMonths = Math.max(recs.length + 6, Math.round((new Date(p.targetDate).getTime() - new Date(p.startDate).getTime()) / DAY / 30));
-  const plannedPerMonth = p.totalBudget / totalMonths;
-  const recent = recs.slice(-4);
-  const avgBurn = recent.length ? avg(recent.map((r) => r.spent)) : plannedPerMonth;
-  const trend = recent.length >= 2 ? (recent[recent.length - 1].spent - recent[0].spent) / (recent.length - 1) : 0;
-
+export function computeBudgetForecast(p: Project): BudgetForecast {
+  const recs = [...p.budgetRecords].sort((a, b) => a.year - b.year || a.month - b.month);
   const points: ForecastPoint[] = [];
-  const d0 = recs.length ? new Date(recs[0].year, recs[0].month - 1, 1) : new Date();
-  let cumActual = recs.reduce((s, r) => s + r.spent, 0);
-  let cumPlanned = 0;
-  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-  recs.forEach((r, i) => {
-    cumPlanned += r.planned;
-    const d = new Date(d0.getTime());
-    d.setMonth(d.getMonth() + i);
-    points.push({ month: `${M[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`, planned: Math.round(cumPlanned), actual: Math.round(cumActual0(points, recs, i)), projected: null, upper: null, lower: null });
-  });
-
-  let cumProj = cumActual;
-  const monthsAheadN = Math.max(6, totalMonths - recs.length);
-  for (let i = 1; i <= monthsAheadN; i++) {
-    cumPlanned += plannedPerMonth;
-    cumProj += avgBurn + trend * i * 0.35;
-    const d = new Date(d0.getTime());
-    d.setMonth(d.getMonth() + recs.length + i - 1);
-    const spread = 3 + i * 0.9;
-    points.push({
-      month: `${M[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
-      planned: Math.round(cumPlanned), actual: null, projected: Math.round(cumProj),
-      upper: Math.round(cumProj * (1 + spread / 100)), lower: Math.round(cumProj * (1 - spread / 100)),
-    });
+  let cumPlanned = 0, cumActual = 0;
+  const byMonth = new Map<string, { planned: number; spent: number }>();
+  for (const r of recs) {
+    const k = `${r.year}-${r.month}`;
+    const e = byMonth.get(k) || { planned: 0, spent: 0 };
+    e.planned += r.planned; e.spent += r.spent;
+    byMonth.set(k, e);
   }
+  const keys = [...byMonth.keys()];
+  const lastN = keys.slice(-4);
+  const avgBurn = lastN.length ? lastN.reduce((s, k) => s + (byMonth.get(k)!.spent), 0) / lastN.length : p.totalBudget / Math.max(6, p.durationMonths);
+  const first = keys.length ? byMonth.get(keys[0])! : { planned: 0, spent: 0 };
+  const last = keys.length ? byMonth.get(keys[keys.length - 1])! : { planned: 0, spent: 0 };
+  const trend = (lastN.length > 1) ? (byMonth.get(lastN[lastN.length - 1])!.spent - byMonth.get(lastN[0])!.spent) / (lastN.length - 1) : 0;
 
+  for (const k of keys) {
+    const [y, m] = k.split("-").map(Number);
+    const e = byMonth.get(k)!;
+    cumPlanned += e.planned; cumActual += e.spent;
+    points.push({ month: m, year: y, planned: cumPlanned, actual: cumActual, projected: cumActual, lower: cumActual, upper: cumActual });
+  }
+  const remainingMonths = Math.max(3, Math.round(p.durationMonths * (1 - Math.min(0.95, p.progress / 100))) + 2);
+  let cumProj = cumActual;
+  const startM = keys.length ? points[points.length - 1] : null;
+  let breachMonth: string | undefined;
+  const monsoon = (m: number) => (m >= 6 && m <= 9);
+  for (let i = 1; i <= remainingMonths; i++) {
+    const m = (( (startM ? startM.month : 1) + i - 1) % 12) + 1;
+    const y = startM ? startM.year + Math.floor(((startM.month - 1 + i) / 12)) : 2026;
+    const season = monsoon(m) ? 0.85 : 1.08;
+    const monthBurn = Math.max(0, (avgBurn + trend / 3 * i * 0.35) * season);
+    cumProj += monthBurn;
+    const spread = 1 + (0.03 + i * 0.009);
+    points.push({ month: m, year: y, planned: cumPlanned, actual: null, projected: Math.round(cumProj), lower: Math.round(cumProj / spread), upper: Math.round(cumProj * spread) });
+    if (!breachMonth && cumProj > p.totalBudget) breachMonth = `${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]} ${y}`;
+  }
   const projectedFinal = Math.round(cumProj);
-  const overrunPct = Math.round(((projectedFinal - p.totalBudget) / p.totalBudget) * 1000) / 10;
-  return { points, projectedFinal, overrunPct, months: totalMonths };
+  const overrunPct = p.totalBudget > 0 ? +(((projectedFinal - p.totalBudget) / p.totalBudget) * 100).toFixed(1) : 0;
+  return { points, projectedFinal, overrunPct, monthlyBurn: +avgBurn.toFixed(1), breachMonth };
 }
 
-function cumActual0(_points: ForecastPoint[], recs: BudgetRecord[], i: number): number {
-  return recs.slice(0, i + 1).reduce((s, r) => s + r.spent, 0);
+// ─── Critical path (milestones) ─────────────────────────────────────────────
+export function criticalPathMilestones(p: Project): string[] {
+  const chain: string[] = [];
+  const sorted = [...p.milestones].sort((a, b) => a.order - b.order);
+  let anchor = 0;
+  for (const m of sorted) {
+    const dur = 30; // heuristic month block
+    const pos = m.order * dur;
+    if (m.isCritical || pos <= anchor) {
+      chain.push(m.id);
+      anchor = pos + dur;
+    }
+  }
+  return chain;
 }
 
-/* ── health score sub-components (doc 06 Part D) ────────── */
-export function computeHealth(p: Project): { schedule: number; budget: number; resources: number; milestones: number; total: number } {
-  const f = extractFeatures(p);
-
-  const PR = clamp(f.progress_vs_elapsed, 0, 1);
-  const TD = clamp(1 - f.days_behind_schedule / 90, 0, 1);
-  const schedule = 100 * (0.5 * PR + 0.5 * TD);
-
-  const burnRatio = f.elapsed_ratio > 0 ? f.budget_utilisation_rate / f.elapsed_ratio : 1;
-  const BR = clamp(1 - Math.abs(burnRatio - 1) / 0.25, 0, 1);
-  const VR = clamp(1 - Math.abs(f.budget_velocity_deviation) / 0.35, 0, 1);
-  const overrunPct = Math.max(0, ((p.projectedBudget - p.totalBudget) / p.totalBudget) * 100);
-  const OR = clamp(1 - overrunPct / 15, 0, 1);
-  const budget = 100 * (0.35 * BR + 0.25 * VR + 0.40 * OR);
-
-  const u = f.resource_utilisation;
-  const UB = u > 0.85 ? 1 - Math.max(0, (u - 0.85) / 0.15) : 1 - Math.max(0, (0.6 - u) / 0.6);
-  const BN = clamp(1 - f.resource_bottleneck_count / 5, 0, 1);
-  const TA = clamp(f.team_size_adequacy, 0, 1);
-  const resources = 100 * (0.45 * UB + 0.30 * BN + 0.25 * TA);
-
-  const now = Date.now();
-  const due = p.milestones.filter((m) => new Date(m.plannedDate).getTime() <= now);
-  const onTime = due.filter((m) => m.status === "COMPLETED");
-  const MA = due.length ? onTime.length / due.length : 1;
-  const slip = p.milestones.filter((m) => m.status === "DELAYED" || m.status === "BLOCKED").length;
-  const SS = clamp(1 - slip / 4, 0, 1);
-  const critDelayed = p.milestones.filter((m) => m.isCritical && (m.status === "DELAYED" || m.status === "BLOCKED")).length;
-  const CD = clamp(1 - critDelayed / 2, 0, 1);
-  const milestones = 100 * (0.45 * MA + 0.35 * SS + 0.20 * CD);
-
-  const total = HEALTH_WEIGHTS.schedule * schedule + HEALTH_WEIGHTS.budget * budget + HEALTH_WEIGHTS.resources * resources + HEALTH_WEIGHTS.milestones * milestones;
-  return { schedule: round1(schedule), budget: round1(budget), resources: round1(resources), milestones: round1(milestones), total: round1(total) };
+// ─── Model lab: retrain simulation ──────────────────────────────────────────
+export function simulateRetrain(currentCount: number): ModelVersion {
+  const seed = currentCount + 1;
+  const jitter = (base: number, spread: number) => +(base + (Math.sin(seed * 12.9898) * spread)).toFixed(3);
+  return {
+    version: `AssurePredict 2.${4 + seed}`,
+    trainedAt: new Date().toISOString(),
+    trainedOn: 5000 + seed * 120,
+    metrics: {
+      auc: clamp(jitter(0.912, 0.012), 0.85, 0.96), accuracy: clamp(jitter(0.842, 0.015), 0.78, 0.92),
+      precision: clamp(jitter(0.814, 0.014), 0.76, 0.9), recall: clamp(jitter(0.831, 0.015), 0.77, 0.92),
+      f1: clamp(jitter(0.822, 0.014), 0.77, 0.91), maeDays: +clamp(jitter(18.4, 1.5), 14, 24).toFixed(1),
+      brier: +clamp(jitter(0.118, 0.01), 0.09, 0.15).toFixed(3), ece: +clamp(jitter(0.041, 0.006), 0.02, 0.06).toFixed(3),
+    },
+    status: "new version",
+    notes: "Retrained on accumulated prediction outcomes with auto-calibration; shadow week pending promotion.",
+  };
 }
-
-const round1 = (v: number) => Math.round(v * 10) / 10;

@@ -1,254 +1,137 @@
-/* ============================================================
- * ProjectAssure — Engine: assembles the 30-project portfolio
- * Attaches alerts, risk assessments & portfolio statistics.
- * ============================================================ */
+// ═══════════════════════════════════════════════════════════════════════════
+// ProjectAssure — Engine: health recomputation (formula + story bias),
+// portfolio stats, RBAC scoping, alert-rule evaluation.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { Project, PortfolioStats, User, ThresholdSettings, Alert } from "./types";
+import { computeHealth, computeDelayPrediction, computeBudgetForecast } from "./ml";
+import { STORY_TARGETS } from "./seed";
+import { clamp } from "./format";
+import { ANCHOR } from "./doc-corpus";
 
-import type {
-  Alert, PortfolioStats, Project, RiskAssessment,
-} from "./types";
-import {
-  buildAuditTrail, buildBudgetRecords, buildDocuments, buildMilestones,
-  buildResources, buildTasks, CONTRACTORS, DEFS, DEPARTMENTS, USERS,
-  DAY, NOW, iso, monthsAgo, type ProjDef,
-} from "./seed-data";
-import { computeDelayPrediction } from "./ml";
-
-let cache: Project[] | null = null;
-
-export function getProjects(): Project[] {
-  if (cache) return cache;
-  const projects: Project[] = [];
-
-  DEFS.forEach((def: ProjDef, idx) => {
-    const id = `prj-${String(idx + 1).padStart(2, "0")}`;
-    const start = new Date(NOW.getTime() - def.startAgo * 30 * DAY);
-    const target = new Date(start.getTime() + def.durMonths * 30 * DAY);
-    const milestones = buildMilestones(def, id);
-    const tasks = buildTasks(milestones, id);
-    const budgetRecords = buildBudgetRecords(def, id);
-
-    /* financials: spent & projected */
-    const spentBudget = Math.round((def.budget * (def.progress / 100) * (def.health === "A" ? 1.18 : def.health === "C" ? 1.34 : 0.98 + (idx % 7) * 0.01)) * 10) / 10;
-    const overrunFactor = def.health === "A" ? 1.052 : def.health === "C" ? 1.118 : 0.985 + ((idx * 7) % 11) / 400;
-    const projectedBudget = Math.round(def.budget * overrunFactor * 10) / 10;
-
-    const p: Project = {
-      id,
-      psId: `PRJ-2026-${String(101 + idx * 7).padStart(4, "0")}`,
-      name: def.name,
-      description: `${def.sector} project under ${def.scheme}, implemented in ${def.district}, ${def.state}. Monitored by ${DEPARTMENTS.find((d) => d.id === def.dept)?.name}.`,
-      status: def.status,
-      departmentId: def.dept,
-      sector: def.sector,
-      scheme: def.scheme,
-      state: def.state,
-      district: def.district,
-      latitude: def.lat,
-      longitude: def.lng,
-      startDate: iso(start),
-      targetDate: iso(target),
-      estimatedEndDate: def.health ? iso(new Date(target.getTime() + (def.health === "C" ? 150 : 55) * DAY)) : undefined,
-      progress: def.progress,
-      totalBudget: def.budget,
-      spentBudget,
-      projectedBudget,
-      healthScore: 100, // recomputed below
-      healthStatus: "HEALTHY",
-      scheduleScore: 90, budgetScore: 90, resourceScore: 90, milestoneScore: 90,
-      healthComputedAt: new Date().toISOString(),
-      story: def.story,
-      projectManager: def.pm,
-      contractor: def.contractor ?? CONTRACTORS[idx % CONTRACTORS.length],
-      milestones, tasks, budgetRecords,
-      resources: buildResources(def, id),
-      documents: buildDocuments(def, id, def.pm),
-      alerts: [],
-      auditTrail: buildAuditTrail(id, def.name),
-    };
-
-    /* risk assessment for flagged projects */
-    if (def.health) {
-      p.riskAssessment = buildRiskAssessment(p, def.health);
-    }
-
-    /* deterministic-ish health from sub-scores, with story overrides */
-    const health = computeHealthFor(p, def);
-    p.scheduleScore = health.schedule;
-    p.budgetScore = health.budget;
-    p.resourceScore = health.resources;
-    p.milestoneScore = health.milestones;
-    p.healthScore = Math.round((0.30 * health.schedule + 0.25 * health.budget + 0.20 * health.resources + 0.25 * health.milestones) * 10) / 10;
-    p.healthStatus = p.healthScore >= 75 ? "HEALTHY" : p.healthScore >= 50 ? "AT_RISK" : "CRITICAL";
-
-    /* delay prediction for every non-completed project */
-    if (def.status === "ACTIVE" || def.status === "ON_HOLD") {
-      p.prediction = computeDelayPrediction(p);
-    }
-
-    /* alerts for flagged projects (+ generic ones) */
-    p.alerts = buildAlerts(p, def.health);
-
-    projects.push(p);
-  });
-
-  cache = projects;
-  return projects;
-}
-
-function computeHealthFor(p: Project, def: ProjDef) {
-  /* Story-driven sub-scores for flagged projects (doc 04 exemplar) */
-  if (def.health === "A" && def.name.startsWith("Bharatmala")) {
-    return { schedule: 61.0, budget: 52.0, resources: 70.0, milestones: 50.0 };
-  }
-  if (def.health === "A" && def.name.startsWith("ICCC")) {
-    /* doc 06 worked example: 70.4 / 35.3 / 82.5 / 59.6 -> 61.3 */
-    return { schedule: 70.4, budget: 35.3, resources: 82.5, milestones: 59.6 };
-  }
-  if (def.health === "C") {
-    return { schedule: 28.5, budget: 31.2, resources: 44.0, milestones: 30.5 }; // ~33
-  }
-  /* healthy: derive from progress consistency with deterministic jitter
-     floor 76 guarantees the weighted composite stays HEALTHY (>= 75) */
-  const seed = (p.id.charCodeAt(p.id.length - 1) * 37 + def.name.length * 13) % 100;
-  const base = 80 + (seed % 15); // 80-94
-  const j = (k: number) => clamp(base + ((seed * (k + 3)) % 11) - 5, 76, 97);
-  return { schedule: j(1), budget: j(2), resources: j(3), milestones: j(4) };
-}
-
-function buildRiskAssessment(p: Project, tier: "R" | "A" | "C"): RiskAssessment {
-  const critical = tier === "C";
+// Story bias keeps the 4 narrative projects at their documented jury-script
+// numbers while still letting mutations move scores (bias is constant).
+export function storyBias(p: Project): { schedule: number; budget: number; resources: number; milestones: number } {
+  const t = STORY_TARGETS[p.id];
+  if (!t) return { schedule: 0, budget: 0, resources: 0, milestones: 0 };
+  const f = computeHealth(p, ANCHOR);
   return {
-    scheduleRisk: critical ? 86 : tier === "A" ? 62 : 55,
-    budgetRisk: critical ? 74 : 68,
-    resourceRisk: critical ? 58 : 41,
-    overallRisk: critical ? 82 : 61,
-    riskLevel: critical ? "CRITICAL" : "HIGH",
-    factors: critical
-      ? [
-          { factor: "Forest clearance permit pending", impact: 92, description: "Stage-2 forest clearance awaiting final sign-off for 41 days; 62% of remaining critical-path tasks blocked." },
-          { factor: "Budget burn ahead of schedule", impact: 78, description: "41% of budget consumed against 19% schedule progress; funding-gap alert triggered." },
-          { factor: "3 critical milestones delayed", impact: 71, description: "Pipeline, pumping station and grid milestones all slipped; downstream dependencies frozen." },
-          { factor: "Monsoon window", impact: 44, description: "Jun-Sep seasonality historically cuts effective field capacity by ~35% in Bundelkhand." },
-        ]
-      : [
-          { factor: "Steel procurement pending 18 days", impact: 84, description: "Vendor lot for pier steel unpaid beyond credit window; casting of pier footing P-07 blocked." },
-          { factor: "Monsoon interruption", impact: 55, description: "Jun-Sep window reduces effective working days on corridor sections." },
-          { factor: "3 of 8 milestones behind", impact: 61, description: "Foundation, procurement award and integration milestones showing slippage." },
-          { factor: "Burn velocity +22%", impact: 47, description: "Spending 22% faster than plan while physical progress trails — efficiency concern." },
-        ],
-    assessedAt: new Date().toISOString(),
+    schedule: clamp(t.schedule - f.schedule, -40, 40),
+    budget: clamp(t.budget - f.budget, -40, 40),
+    resources: clamp(t.resources - f.resources, -40, 40),
+    milestones: clamp(t.milestones - f.milestones, -40, 40),
   };
 }
 
-function buildAlerts(p: Project, tier?: "R" | "A" | "C"): Alert[] {
-  const alerts: Alert[] = [];
-  const push = (a: Omit<Alert, "id" | "projectId">) =>
-    alerts.push({ id: `${p.id}-alert-${alerts.length + 1}`, projectId: p.id, ...a });
+/** Recompute a project's health + prediction from its live data (mutations feed this). */
+export function recomputeProject(p: Project, thresholds: ThresholdSettings, now = ANCHOR): Project {
+  const bias = storyBias(p);
+  const f = computeHealth(p, now);
+  const schedule = clamp(f.schedule + bias.schedule, 0, 100);
+  const budget = clamp(f.budget + bias.budget, 0, 100);
+  const resources = clamp(f.resources + bias.resources, 0, 100);
+  const milestones = clamp(f.milestones + bias.milestones, 0, 100);
+  const health = 0.3 * schedule + 0.25 * budget + 0.2 * resources + 0.25 * milestones;
+  const next: Project = {
+    ...p,
+    scheduleScore: Math.round(schedule * 10) / 10,
+    budgetScore: Math.round(budget * 10) / 10,
+    resourceScore: Math.round(resources * 10) / 10,
+    milestoneScore: Math.round(milestones * 10) / 10,
+    healthScore: Math.round(health * 10) / 10,
+    healthComputedAt: new Date().toISOString(),
+  };
+  next.healthStatus = next.healthScore >= thresholds.amberAt ? "HEALTHY" : next.healthScore >= thresholds.redAt ? "AT_RISK" : "CRITICAL";
 
-  if (tier === "C") {
-    push({
-      title: "Critical: projected budget overrun crosses 20%",
-      description: `Prophet forecast projects final cost at ₹${(p.projectedBudget / 100).toFixed(2)} Cr vs sanctioned ₹${(p.totalBudget / 100).toFixed(2)} Cr (+11.8%). Mandatory review note required.`,
-      severity: "CRITICAL", type: "BUDGET_OVERRUN", isRead: false, createdAt: monthsAgo(0.05),
-      recommendedAction: "Immediately verify burn-rate ledger and freeze non-critical procurement pending ministry review.",
-      recommendedOwner: "Project Manager", recommendedDeadline: "within 24 hours",
-    });
-    push({
-      title: "Critical: 3 critical-path milestones delayed",
-      description: "Pipeline laying, pumping station and rural grid milestones are delayed; 12 downstream tasks frozen on the critical path.",
-      severity: "CRITICAL", type: "MILESTONE_SLIPPAGE", isRead: false, createdAt: monthsAgo(0.12),
-      recommendedAction: "Convene escalation review with contractor; resequence non-blocked tasks and file permit status update.",
-      recommendedOwner: "Project Manager", recommendedDeadline: "this week",
-    });
-    push({
-      title: "Risk level change: AMBER → RED",
-      description: "Health score crossed below 50 on the latest scoring run. Human-officer verification required before escalation (rule R10).",
-      severity: "HIGH", type: "RISK_LEVEL_CHANGE", isRead: false, createdAt: monthsAgo(0.2),
-      recommendedAction: "Assign monitoring officer to verify field data feeding the health score.",
-      recommendedOwner: "Field Reporting Officer", recommendedDeadline: "within 48 hours",
-    });
+  // keep financial projection in sync with any budget edits
+  const forecast = computeBudgetForecast(next);
+  next.projectedBudget = next.projectedBudget > 0 && next.status === "ACTIVE" ? Math.max(next.spentBudget, Math.min(forecast.projectedFinal, next.projectedBudget * 1.5)) : next.projectedBudget;
+
+  if (next.status === "ACTIVE" || next.status === "ON_HOLD") {
+    next.prediction = computeDelayPrediction(next, p.prediction?.modelVersion ?? "AssurePredict 2.3");
+  } else if (next.status === "PLANNING") {
+    // v4: newly created projects start in PLANNING — they still deserve a
+    // *baseline* (pre-execution) risk score so "Run prediction" works from
+    // minute one instead of silently doing nothing.
+    const base = computeDelayPrediction(next, "AssurePredict 2.3");
+    next.prediction = { ...base, isBaseline: true };
+  } else {
+    next.prediction = undefined;
   }
-  if (tier === "A") {
-    const overrunPct = ((p.projectedBudget - p.totalBudget) / p.totalBudget) * 100;
-    const delayedMs = p.milestones.find((m) => m.status === "DELAYED" || m.status === "BLOCKED");
-    if (overrunPct > 8) {
-      push({
-        title: "Warning: projected budget overrun > 10%",
-        description: `Projected final cost ₹${(p.projectedBudget / 100).toFixed(2)} Cr exceeds sanctioned ₹${(p.totalBudget / 100).toFixed(2)} Cr by ${overrunPct.toFixed(1)}%.`,
-        severity: "HIGH", type: "BUDGET_OVERRUN", isRead: false, createdAt: monthsAgo(0.08),
-        recommendedAction: "Verify cost ledger, re-examine velocity deviation and issue weekly re-forecast.",
-        recommendedOwner: "Project Manager", recommendedDeadline: "this week",
-      });
-    } else {
-      push({
-        title: "Budget stress: forecast upper interval crosses sanctioned cost",
-        description: `Point estimate stays within +${overrunPct.toFixed(1)}%, but the forecast upper band breaches ₹${(p.totalBudget / 100).toFixed(2)} Cr before completion month — BUDGET_STRESS rule fires.`,
-        severity: "HIGH", type: "BUDGET_OVERRUN", isRead: false, createdAt: monthsAgo(0.08),
-        recommendedAction: "Verify burn-rate ledger, check velocity deviation (+22% vs plan) and schedule weekly re-forecast.",
-        recommendedOwner: "Project Manager", recommendedDeadline: "this week",
-      });
-    }
-    push({
-      title: `Milestone slippage detected on critical path${delayedMs ? `: ${delayedMs.name}` : ""}`,
-      description: `${delayedMs ? `"${delayedMs.name}" (weight ${delayedMs.weight}${delayedMs.isCritical ? ", critical path" : ""}) is ${delayedMs.status}` : "A milestone is behind schedule"}. Downstream casting/dependency sequence impacted.`,
-      severity: "MEDIUM", type: "MILESTONE_SLIPPAGE", isRead: false, createdAt: monthsAgo(0.3),
-      recommendedAction: "Expedite steel procurement; confirm revised sequence date with contractor.",
-      recommendedOwner: "Project Manager", recommendedDeadline: "within 7 days",
-    });
-    push({
-      title: "Resource bottleneck: cranes at 96% utilisation",
-      description: "Tower crane pool exceeds 90% utilisation threshold — queueing risk on lifting operations.",
-      severity: "MEDIUM", type: "RESOURCE_BOTTLENECK", isRead: true, createdAt: monthsAgo(0.6),
-      recommendedAction: "Evaluate inter-project crane transfer or extended shift authorisation.",
-      recommendedOwner: "Project Manager", recommendedDeadline: "this week",
-    });
-  }
-  /* generic light alerts — only a handful, deterministic */
-  if (!tier) {
-    const n = parseInt(p.id.slice(-2), 10);
-    if (n % 8 === 3 && p.progress > 40 && p.progress < 80) {
-      push({
-        title: "Data freshness notice",
-        description: "Latest monthly progress report is 9 days old — within SLA but aging. Upload is due.",
-        severity: "LOW", type: "DATA_STALENESS", isRead: rnd() > 0.5, createdAt: monthsAgo(0.35),
-        recommendedAction: "Schedule the routine report upload; no action required if already filed.",
-        recommendedOwner: "Field Reporting Officer", recommendedDeadline: "monitor",
-      });
-    }
-  }
-  return alerts;
-}
-
-/* deterministic read flag */
-function rnd(): number {
-  return (Math.sin(NOW.getTime() / 1e7) + 1) / 2;
-}
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-
-export function getProject(id: string): Project | undefined {
-  return getProjects().find((p) => p.id === id);
+  return next;
 }
 
 export function computePortfolioStats(projects: Project[]): PortfolioStats {
-  const active = projects.filter((p) => p.status === "ACTIVE");
-  const allAlerts = projects.flatMap((p) => p.alerts);
+  const [totalBudget, totalSpent, avgHealth, avgProgress] = projects.reduce(
+    ([b, s, h, pr], p) => [b + p.totalBudget, s + p.spentBudget, h + p.healthScore, pr + p.progress],
+    [0, 0, 0, 0] as number[],
+  );
+  const n = projects.length || 1;
+  const alerts = projects.flatMap(p => p.alerts);
   return {
     totalProjects: projects.length,
-    active: active.length,
-    healthy: projects.filter((p) => p.healthStatus === "HEALTHY").length,
-    atRisk: projects.filter((p) => p.healthStatus === "AT_RISK").length,
-    critical: projects.filter((p) => p.healthStatus === "CRITICAL").length,
-    totalBudget: Math.round(projects.reduce((s, p) => s + p.totalBudget, 0)),
-    totalSpent: Math.round(projects.reduce((s, p) => s + p.spentBudget, 0)),
-    avgHealth: Math.round(projects.reduce((s, p) => s + p.healthScore, 0) / projects.length),
-    avgProgress: Math.round(projects.reduce((s, p) => s + p.progress, 0) / projects.length),
-    projectsBehind: projects.filter((p) => p.healthStatus !== "HEALTHY").length,
-    projectedOverruns: projects.filter((p) => p.projectedBudget > p.totalBudget * 1.1).length,
-    alertsUnread: allAlerts.filter((a) => !a.isRead).length,
-    criticalAlerts: allAlerts.filter((a) => a.severity === "CRITICAL" && !a.isRead).length,
+    active: projects.filter(p => p.status === "ACTIVE").length,
+    healthy: projects.filter(p => p.healthStatus === "HEALTHY").length,
+    atRisk: projects.filter(p => p.healthStatus === "AT_RISK").length,
+    critical: projects.filter(p => p.healthStatus === "CRITICAL").length,
+    totalBudget, totalSpent,
+    avgHealth: Math.round(avgHealth / n),
+    avgProgress: Math.round(avgProgress / n),
+    projectsBehind: projects.filter(p => {
+      const elapsed = (Date.now() - new Date(p.startDate).getTime()) / (new Date(p.targetDate).getTime() - new Date(p.startDate).getTime());
+      return p.status === "ACTIVE" && elapsed > 0.05 && p.progress / 100 < elapsed * 0.92;
+    }).length,
+    projectedOverruns: projects.filter(p => p.projectedBudget > p.totalBudget * 1.1).length,
+    alertsUnread: alerts.filter(a => !a.isRead).length,
+    criticalAlerts: alerts.filter(a => a.severity === "CRITICAL" && !a.isRead).length,
+    documentsProcessed: projects.reduce((s, p) => s + p.documents.filter(d => d.status === "PROCESSED").length, 0),
+    emailsSent: 0,
   };
 }
 
-export { DEPARTMENTS, USERS } from "./seed-data";
-export { ROLES_CONFIG } from "./seed-data";
+// ─── RBAC scoping ───────────────────────────────────────────────────────────
+export function scopedProjects(projects: Project[], user: User): Project[] {
+  const own = (p: Project) => p.ownerId === user.id; // registered-account ownership always wins
+  switch (user.role) {
+    case "ADMIN": return projects;
+    case "PROJECT_MANAGER": return projects.filter(p => own(p) || p.projectManager === user.name);
+    case "STAKEHOLDER": return projects.filter(p => own(p) || p.departmentId === user.departmentId);
+    case "VIEWER": return projects.filter(p => own(p) || ["prj-01", "prj-02", "prj-03", "prj-04", "prj-05", "prj-19"].includes(p.id));
+    default: return [];
+  }
+}
+
+// ─── Alert rule evaluation (runs after mutations) ───────────────────────────
+export interface RuleEvaluation { rule: string; severity: Alert["severity"]; type: Alert["type"]; title: string; description: string; action: string; owner: string; deadline: string; }
+
+export function evaluateAlertRules(p: Project, t: ThresholdSettings): RuleEvaluation[] {
+  const out: RuleEvaluation[] = [];
+  const overrunPct = p.totalBudget > 0 ? ((p.projectedBudget - p.totalBudget) / p.totalBudget) * 100 : 0;
+  const budgetAlerts = p.alerts.filter(a => a.type === "BUDGET_OVERRUN");
+
+  if (overrunPct > t.budgetCriticalPct && !budgetAlerts.some(a => a.severity === "CRITICAL")) {
+    out.push({ rule: "Overrun >20%", severity: "CRITICAL", type: "BUDGET_OVERRUN", title: `Projected overrun +${overrunPct.toFixed(1)}% — CRITICAL escalation band`, description: `Forecast final cost exceeds sanction by more than ${t.budgetCriticalPct}%. Ministry dashboard escalation and a mandatory review note are triggered.`, action: "Freeze new financial approvals and prepare the Cabinet escalation note.", owner: "Finance Division", deadline: "within 48 hours" });
+  } else if (overrunPct > t.budgetWarnPct && !budgetAlerts.some(a => a.severity === "HIGH")) {
+    out.push({ rule: "Overrun >10%", severity: "HIGH", type: "BUDGET_OVERRUN", title: `Projected overrun +${overrunPct.toFixed(1)}% — WARNING band`, description: `Forecast exceeds the ${t.budgetWarnPct}% warning threshold. Weekly re-forecast is now mandatory.`, action: "Issue vendor liquidated-damages notice and re-baseline the cash-flow.", owner: p.projectManager, deadline: "weekly until stabilised" });
+  }
+
+  if (p.prediction && p.prediction.probability * 100 >= t.delayProbEmailAt && !p.alerts.some(a => a.type === "DELAY_PREDICTION")) {
+    out.push({ rule: `Delay probability ≥ ${t.delayProbEmailAt}%`, severity: "HIGH", type: "DELAY_PREDICTION", title: `Delay probability ${Math.round(p.prediction.probability * 100)}% — email threshold crossed`, description: `Model ${p.prediction.modelVersion} estimates ${p.prediction.estimatedDays}-day slip (90% CI ${p.prediction.ciLower}–${p.prediction.ciUpper}). Advisory — rule R10 verification required.`, action: "Run the mitigation plan on the top driving factors and verify with the field officer.", owner: p.projectManager, deadline: "within 5 working days" });
+  }
+
+  const delayed = p.milestones.filter(m => m.status === "DELAYED" || m.status === "BLOCKED");
+  const critical = delayed.filter(m => m.isCritical);
+  if (critical.length >= 1 && !p.alerts.some(a => a.type === "MILESTONE_SLIPPAGE" && a.severity === "HIGH")) {
+    const worst = critical[0];
+    out.push({ rule: "Critical milestone delayed", severity: delayed.length > 3 ? "CRITICAL" : "HIGH", type: "MILESTONE_SLIPPAGE", title: `${worst.name} — critical path slip`, description: `${critical.length} critical milestone(s) delayed or blocked; ${worst.name} is the binding constraint.`, action: "Escalate the blocking dependency and re-sequence parallel work fronts.", owner: p.projectManager, deadline: "before next milestone review" });
+  }
+
+  const bottlenecks = p.resources.filter(r => r.utilised > 90);
+  if (bottlenecks.length >= 2 && !p.alerts.some(a => a.type === "RESOURCE_BOTTLENECK")) {
+    out.push({ rule: "≥2 resources >90%", severity: "MEDIUM", type: "RESOURCE_BOTTLENECK", title: `${bottlenecks.length} resource bottlenecks detected`, description: bottlenecks.map(r => `${r.name} at ${r.utilised}%`).join(" · ") + " — no catch-up capacity remains.", action: "Re-deploy from idle fronts or hire short-term plant.", owner: p.projectManager, deadline: "before 30 Sep 2026" });
+  }
+
+  if (p.healthScore < t.redAt && !p.alerts.some(a => a.type === "RISK_LEVEL_CHANGE")) {
+    out.push({ rule: `Health < ${t.redAt}`, severity: "CRITICAL", type: "RISK_LEVEL_CHANGE", title: "Project health entered the Red band", description: `Composite health ${p.healthScore}. Rule R10: a human officer must verify field data before escalation.`, action: "Verify with the executive engineer, then escalate to the administrative ministry.", owner: "Arun Kulkarni (JS, MoSPI)", deadline: "within 48 hours" });
+  }
+  return out;
+}
