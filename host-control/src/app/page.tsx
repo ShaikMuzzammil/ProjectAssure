@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect } from "react";
 import { AppShell } from "@/components/host/app-shell";
 import { MissionDashboard } from "@/components/host/mission-dashboard";
@@ -14,34 +13,18 @@ import { AuditTrail } from "@/components/host/audit-trail";
 import { useAdminStore } from "@/store/admin-store";
 
 export default function HomePage() {
-  const { currentView, hydrate, aiStatus } = useAdminStore();
+  const { currentView, hydrate } = useAdminStore();
 
-  // ─── One-shot AI status probe on first load ─────────────────────────────
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const res = await fetch("/api/ai/status", { cache: "no-store" });
-        const json = await res.json();
-        if (active) useAdminStore.getState().setAiStatus(json);
-      } catch {
-        /* silent */
-      }
-    })();
-    return () => { active = false; };
-  }, []);
-
-  // ─── Initial sync hydrate (the AppShell polls every 5s after this) ──────
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/admin/sync", { cache: "no-store" });
-        const json = await res.json();
-        if (active) hydrate(json);
-      } catch {
-        /* silent — AppShell retry loop will pick it up */
-      }
+        const [syncRes, aiRes] = await Promise.all([fetch("/api/admin/sync", { cache: "no-store" }), fetch("/api/ai/status", { cache: "no-store" })]);
+        const syncJson = await syncRes.json();
+        if (active) hydrate(syncJson);
+        const aiJson = await aiRes.json();
+        if (active) useAdminStore.getState().setAiStatus(aiJson);
+      } catch {}
     })();
     return () => { active = false; };
   }, [hydrate]);
@@ -55,8 +38,8 @@ export default function HomePage() {
       {currentView === "users" && <UserManagement />}
       {currentView === "intelligence" && <IntelligenceConsole />}
       {currentView === "integrations" && <Integrations />}
-      {currentView === "audit" && <AuditTrail />}
       {currentView === "demo" && <DemoShowcase />}
+      {currentView === "audit" && <AuditTrail />}
     </AppShell>
   );
 }

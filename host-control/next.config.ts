@@ -1,11 +1,3 @@
 import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  reactStrictMode: false,
-};
-
+const nextConfig: NextConfig = { reactStrictMode: true };
 export default nextConfig;

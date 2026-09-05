@@ -1,292 +1,54 @@
 "use client";
-
-import { useState } from "react";
-import { motion } from "framer-motion";
-import {
-  Plug, Globe, Brain, Mail, Webhook, CheckCircle2, XCircle,
-  RefreshCw, ExternalLink, Save, Key, Activity, Copy,
-} from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { toast } from "sonner";
+import React, { useState } from "react";
 import { useAdminStore } from "@/store/admin-store";
-import { cn, fmtDateTime } from "@/lib/utils";
-
-const ENV_VARS = [
-  { key: "MAIN_PROJECT_URL", desc: "URL of the main ProjectAssure prototype this host-control talks to.", example: "https://project-assure.vercel.app" },
-  { key: "GEMINI_API_KEY", desc: "Free-tier Google AI Studio key — first-choice intelligence provider.", example: "AIzaSy…" },
-  { key: "GROQ_API_KEY", desc: "Free-tier Groq key — OpenAI-compatible fallback.", example: "gsk_…" },
-  { key: "OPENROUTER_API_KEY", desc: "OpenRouter key — free community models fallback.", example: "sk-or-…" },
-  { key: "OPENAI_API_KEY", desc: "Paid OpenAI key — last-resort fallback.", example: "sk-…" },
-  { key: "WEBHOOK_SECRET", desc: "Optional shared secret the main project sends in x-webhook-secret header to your /api/admin/sync webhook.", example: "whsec_…" },
-  { key: "DATABASE_URL", desc: "Optional SQLite/Postgres URL — only used by the empty Prisma schema. Not required for the demo.", example: "file:./dev.db" },
-];
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Plug, Link, Check, X, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 export function Integrations() {
-  const { integration, aiStatus, setIntegration, lastSyncAt, hydrate } = useAdminStore();
-  const [url, setUrl] = useState(integration?.mainProjectUrl ?? "https://project-assure.vercel.app");
-  const [webhookSecret, setWebhookSecret] = useState(integration?.webhookSecret ?? "");
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ reachable: boolean; status?: number; error?: string } | null>(null);
+  const { aiStatus } = useAdminStore();
+  const [mainUrl, setMainUrl] = useState("https://project-assure.vercel.app");
+  const [reachable, setReachable] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(false);
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await fetch("/api/health");
-      const localHealth = await res.json();
-      // Also probe main project URL via server-side (avoids CORS issues):
-      const probeRes = await fetch("/api/admin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ probe: url }) });
-      // The POST endpoint is webhook-style; for the test we just call our own /api/health and trust the integration store.
-      setIntegration({ mainProjectUrl: url, mainProjectReachable: localHealth.ok === true, lastHealthCheck: new Date().toISOString() });
-      setTestResult({ reachable: localHealth.ok === true, status: 200 });
-      toast.success("Connection tested", { description: `Host-control reachable: ${localHealth.ok}` });
-      // Pull fresh sync so the indicator updates
-      const sync = await fetch("/api/admin/sync", { cache: "no-store" });
-      const syncJson = await sync.json();
-      hydrate(syncJson);
-    } catch (e: any) {
-      setTestResult({ reachable: false, error: e?.message ?? "fetch_failed" });
-      toast.error("Connection test failed", { description: e?.message });
-    } finally {
-      setTesting(false);
-    }
+  const testConnection = async () => {
+    setChecking(true); setReachable(null);
+    try { const res = await fetch(`${mainUrl}/api/health`, { cache: "no-store" }); setReachable(res.ok); toast.success(res.ok ? "Main project reachable" : "Health check failed", { description: res.ok ? `${mainUrl} responded OK` : `Status ${res.status}` }); }
+    catch { setReachable(false); toast.error("Could not reach main project", { description: "Check the URL or CORS settings" }); }
+    finally { setChecking(false); }
   };
-
-  const handleSave = async () => {
-    setIntegration({
-      mainProjectUrl: url,
-      webhookSecret,
-      webhookUrl: "/api/admin/sync",
-    });
-    toast.success("Integration config saved", { description: `Main project URL: ${url}` });
-  };
-
-  const copyWebhook = () => {
-    const fullUrl = typeof window !== "undefined" ? `${window.location.origin}/api/admin/sync` : "/api/admin/sync";
-    navigator.clipboard?.writeText(fullUrl);
-    toast.success("Webhook URL copied", { description: fullUrl });
-  };
-
-  const statusTiles = [
-    {
-      label: "Main project URL",
-      value: integration?.mainProjectUrl ?? "—",
-      connected: integration?.mainProjectReachable === true,
-      icon: Globe,
-      detail: integration?.lastHealthCheck ? `Last check ${fmtDateTime(integration.lastHealthCheck)}` : "Not tested yet",
-    },
-    {
-      label: "Intelligence provider",
-      value: aiStatus?.label ?? "—",
-      connected: aiStatus?.connected === true,
-      icon: Brain,
-      detail: aiStatus?.tier ? `Tier: ${aiStatus.tier}` : "—",
-    },
-    {
-      label: "Email service",
-      value: "Outbox (demo)",
-      connected: false,
-      icon: Mail,
-      detail: "Email is queued in the host-control; main prototype's SMTP outbox handles delivery.",
-    },
-    {
-      label: "Webhook endpoint",
-      value: "/api/admin/sync",
-      connected: true,
-      icon: Webhook,
-      detail: "POST with x-webhook-secret header — main project can push events here.",
-    },
-  ];
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight">Integrations</h2>
-        <p className="text-sm text-muted-foreground">
-          Connect the host-control plane to the main ProjectAssure prototype, configure intelligence providers, and set up inbound webhooks.
-        </p>
+    <div className="mx-auto max-w-[800px] space-y-4">
+      <div><h2 className="text-lg font-bold">Integrations</h2><p className="text-xs text-slate-500">Connect the host-control to the main ProjectAssure prototype + configure intelligence providers.</p></div>
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h3 className="flex items-center gap-2 text-sm font-bold"><Link className="h-4 w-4 text-[#0c93e7]" />Main Project URL</h3>
+        <p className="mt-1 text-xs text-slate-500">The host-control polls this URL&apos;s <code className="rounded bg-slate-100 px-1">/api/health</code> every 5 seconds to keep the portfolio snapshot fresh.</p>
+        <div className="mt-3 flex gap-2">
+          <Input value={mainUrl} onChange={e => setMainUrl(e.target.value)} placeholder="https://project-assure.vercel.app" />
+          <Button onClick={testConnection} disabled={checking}><RefreshCw className={cn("h-4 w-4", checking && "animate-spin")} />Test connection</Button>
+        </div>
+        {reachable !== null && <div className={cn("mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold", reachable ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700")}>{reachable ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}{reachable ? "Main project is reachable" : "Cannot reach the main project"}</div>}
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => window.open(mainUrl, "_blank")}>Open main project ↗</Button>
       </div>
-
-      {/* Status grid */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {statusTiles.map((s, i) => {
-          const Icon = s.icon;
-          return (
-            <motion.div
-              key={s.label}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-            >
-              <Card>
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                      <div className={cn("rounded-lg p-2.5", s.connected ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300")}>
-                        <Icon className="size-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.label}</div>
-                        <div className="text-sm font-semibold truncate">{s.value}</div>
-                        <div className="text-[11px] text-muted-foreground">{s.detail}</div>
-                      </div>
-                    </div>
-                    {s.connected ? (
-                      <Badge variant="outline" className="border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-500/15 dark:text-emerald-300 gap-1 text-[10px]">
-                        <CheckCircle2 className="size-3" /> Connected
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-500/15 dark:text-amber-300 gap-1 text-[10px]">
-                        <XCircle className="size-3" /> Pending
-                      </Badge>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          );
-        })}
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h3 className="flex items-center gap-2 text-sm font-bold"><Plug className="h-4 w-4 text-[#0c93e7]" />Service Status</h3>
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+          <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5"><div><div className="text-xs font-bold">Main project</div><div className="text-[10px] text-slate-500">{mainUrl}</div></div><span className={cn("flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold", reachable ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{reachable === true ? "REACHABLE" : reachable === false ? "UNREACHABLE" : "NOT TESTED"}</span></div>
+          <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5"><div><div className="text-xs font-bold">Intelligence provider</div><div className="text-[10px] text-slate-500">{aiStatus?.label ?? "probing…"}</div></div><span className={cn("flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold", aiStatus?.connected ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>{aiStatus?.connected ? "CONNECTED" : "OFFLINE"}</span></div>
+        </div>
       </div>
-
-      {/* Main project URL config */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Main Project URL</CardTitle>
-          <CardDescription>
-            The host-control polls this URL&apos;s /api/health endpoint and links to it from the Demo Showcase.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="flex-1 min-w-[280px] space-y-1.5">
-              <Label htmlFor="main-url">URL</Label>
-              <Input
-                id="main-url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://project-assure.vercel.app"
-              />
-            </div>
-            <Button onClick={handleTest} disabled={testing} variant="outline" className="gap-1.5">
-              <RefreshCw className={cn("size-4", testing && "animate-spin")} />
-              {testing ? "Testing…" : "Test connection"}
-            </Button>
-            <Button onClick={handleSave} className="gap-1.5">
-              <Save className="size-4" /> Save
-            </Button>
-            <Button asChild variant="ghost" className="gap-1.5">
-              <a href={url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="size-4" /> Open main project
-              </a>
-            </Button>
-          </div>
-          {testResult && (
-            <div className={cn(
-              "rounded-lg border p-3 text-sm flex items-center gap-2",
-              testResult.reachable ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" : "border-rose-300 bg-rose-50 dark:bg-rose-500/10 text-rose-800 dark:text-rose-200"
-            )}>
-              {testResult.reachable
-                ? <><CheckCircle2 className="size-4" /> Reachable — host-control self-health OK ({testResult.status}).</>
-                : <><XCircle className="size-4" /> Not reachable — {testResult.error ?? "unknown error"}.</>
-              }
-            </div>
-          )}
-          <Separator />
-          <div className="text-xs text-muted-foreground">
-            <strong>Sync state:</strong> {integration?.syncActive ? "Active (polling every 5s)" : "Idle"} · Last sync {fmtDateTime(lastSyncAt)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Webhook config */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2"><Webhook className="size-4" /> Inbound Webhook</CardTitle>
-          <CardDescription>
-            Set up an inbound webhook where the main ProjectAssure can POST events (new alert, milestone slip, approval raised) to this host-control.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Inbound URL</Label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded-md border bg-muted/40 px-3 py-2 text-xs">
-                {typeof window !== "undefined" ? `${window.location.origin}/api/admin/sync` : "/api/admin/sync"}
-              </code>
-              <Button size="sm" variant="outline" onClick={copyWebhook} className="gap-1.5">
-                <Copy className="size-3.5" /> Copy
-              </Button>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="wh-secret">Shared secret (optional)</Label>
-            <Input
-              id="wh-secret"
-              value={webhookSecret}
-              onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder="whsec_…"
-              type="password"
-            />
-            <div className="text-[11px] text-muted-foreground">
-              Set the same value as <code className="bg-muted/40 px-1 rounded">WEBHOOK_SECRET</code> env var on the host-control. The main project must send it in the <code className="bg-muted/40 px-1 rounded">x-webhook-secret</code> header on every POST.
-            </div>
-          </div>
-          <Separator />
-          <div className="rounded-md bg-muted/30 p-3 text-xs">
-            <div className="font-medium mb-1">Example payload from main project:</div>
-            <pre className="overflow-x-auto custom-scrollbar text-[10px] font-mono leading-tight">{`POST /api/admin/sync
-Content-Type: application/json
-x-webhook-secret: whsec_…
-
-{
-  "event": "alert.raised",
-  "project": "p-bm4",
-  "alert": { "title": "Delay prediction 75%", "severity": "CRITICAL" }
-}`}</pre>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Env vars table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2"><Key className="size-4" /> Environment Variables</CardTitle>
-          <CardDescription>
-            Reference table — set these on Vercel (Project → Settings → Environment Variables) before deploying.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="py-2 pr-3 font-medium">Variable</th>
-                  <th className="py-2 px-3 font-medium">Purpose</th>
-                  <th className="py-2 pl-3 font-medium">Example</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ENV_VARS.map(v => (
-                  <tr key={v.key} className="border-b last:border-0 hover:bg-accent/40">
-                    <td className="py-2.5 pr-3">
-                      <code className="text-xs bg-muted/40 px-1.5 py-0.5 rounded">{v.key}</code>
-                    </td>
-                    <td className="py-2.5 px-3 text-xs text-muted-foreground">{v.desc}</td>
-                    <td className="py-2.5 pl-3">
-                      <code className="text-[11px] text-muted-foreground">{v.example}</code>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h3 className="text-sm font-bold">Environment Variables</h3>
+        <p className="mt-1 text-xs text-slate-500">Set these in your Vercel project settings (host-control) to enable each integration.</p>
+        <div className="mt-3 space-y-1.5">
+          {[["GEMINI_API_KEY", "Free — default intelligence provider", "aistudio.google.com/apikey"], ["GROQ_API_KEY", "Free — fast fallback", "console.groq.com/keys"], ["OPENROUTER_API_KEY", "Free — community models", "openrouter.ai/settings/keys"], ["MAIN_PROJECT_URL", "The main prototype's URL", "project-assure.vercel.app"]].map(([k, desc, link]) => (
+            <div key={k} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"><code className="font-mono text-xs font-bold text-[#015ca0]">{k}</code><span className="text-[11px] text-slate-600">{desc}</span><a href={`https://${link}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-[#0c93e7] hover:underline">{link} ↗</a></div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
