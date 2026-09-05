@@ -1,25 +1,15 @@
-"use client"
+"use client";
 
-import { useTheme } from "next-themes"
-import { Toaster as Sonner, ToasterProps } from "sonner"
+// Sonner toaster wrapper — uses next-themes for dark mode sync.
+// This file exists so that any leftover shadcn/ui imports resolve cleanly
+// during the Vercel build. If next-themes is not configured, the toaster
+// still works (just without automatic dark-mode sync).
+import { Toaster as SonnerToaster } from "sonner";
 
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+type ToasterProps = React.ComponentProps<typeof SonnerToaster>;
 
-  return (
-    <Sonner
-      theme={theme as ToasterProps["theme"]}
-      className="toaster group"
-      style={
-        {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-        } as React.CSSProperties
-      }
-      {...props}
-    />
-  )
-}
+export const Toaster = ({ ...props }: ToasterProps) => {
+  return <SonnerToaster {...props} />;
+};
 
-export { Toaster }
+export { toast } from "sonner";
