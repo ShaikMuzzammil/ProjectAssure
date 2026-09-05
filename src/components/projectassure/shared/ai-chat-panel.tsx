@@ -12,6 +12,9 @@ export default function AiChatPanel() {
   const aiOpen = useApp(s => s.aiOpen);
   const setAiOpen = useApp(s => s.setAiOpen);
   const ask = useApp(s => s.ask);
+  const aiLiveMode = useApp(s => s.aiLiveMode);
+  const aiStatus = useApp(s => s.aiStatus);
+  const refreshAiStatus = useApp(s => s.refreshAiStatus);
   const aiSeedQuestion = useApp(s => s.aiSeedQuestion);
   const clearAiSeed = useApp(s => s.clearAiSeed);
   const aiContextProjectId = useApp(s => s.aiContextProjectId);
@@ -44,6 +47,9 @@ export default function AiChatPanel() {
 
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [thread?.messages.length, busy]);
 
+  // v11: make sure the panel knows whether the live service is connected
+  useEffect(() => { if (aiOpen) void refreshAiStatus(); }, [aiOpen, refreshAiStatus]);
+
   return (
     <AnimatePresence>
       {aiOpen && (
@@ -52,8 +58,16 @@ export default function AiChatPanel() {
           <div className="flex h-14 items-center gap-2.5 border-b px-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white"><BrainCircuit className="h-4.5 w-4.5" /></div>
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-bold">Assure Intelligence</div>
-              <div className="text-[9.5px] text-muted-foreground">ReAct · 8 tools · session memory 24h · max 8 calls/turn</div>
+              <div className="flex items-center gap-1.5 text-[13px] font-bold">
+                Assure Intelligence
+                {aiLiveMode && (
+                  <span className={cn("inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[8.5px] font-bold", aiStatus?.connected ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>
+                    <span className={cn("h-1.5 w-1.5 rounded-full", aiStatus?.connected ? "bg-emerald-500" : "bg-amber-500 animate-pulse")} />
+                    {aiStatus?.connected ? "LIVE" : "CONNECTING"}
+                  </span>
+                )}
+              </div>
+              <div className="text-[9.5px] text-muted-foreground">{aiLiveMode ? (aiStatus?.connected ? "live service · grounded on the full project dossier" : "live service · auto-fallback to built-in engine") : "built-in engine · cited · grounded · transparent"}</div>
             </div>
             <button onClick={() => setAiOpen(false)} className="rounded-md border p-1.5 transition hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
           </div>

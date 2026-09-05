@@ -30,8 +30,29 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (commit the template, never real keys)
 .env*
+!.env.example
+
+# ── ProjectAssure: keep the GitHub repo = the deployable app ONLY ────────────
+# old versions, analysis copies, staging and deliverables never get pushed
+/analysis/
+/dist-package/
+/dist-v9/
+/download/
+/upload/
+/tool-results/
+/mini-services/
+/examples/
+/tests/
+/db/
+/scripts/
+/.zscripts/
+/agent-ctx/
+/docs-dist/
+worklog.md
+tsconfig.tsbuildinfo
+*.zip
 
 # vercel
 .vercel

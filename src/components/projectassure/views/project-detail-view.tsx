@@ -834,18 +834,18 @@ function DocumentsTab({ p, onDelete }: { p: NonNullable<ReturnType<typeof useApp
                 <>
                   <div className="mt-2 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{d.summary}</div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {d.extractedData.fields.slice(0, 4).map(f => <span key={f.field} className="rounded-full bg-muted px-2 py-0.5 font-mono text-[9px]">{f.field}={f.value.slice(0, 14)}</span>)}
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">conf ≥ {Math.min(...d.extractedData.fields.map(f => f.confidence)).toFixed(2)}</span>
-                    {d.extractedData.risks.filter(r => !/^No material/.test(r)).length > 0 && (
-                      <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-700 dark:text-rose-300">{d.extractedData.risks.filter(r => !/^No material/.test(r)).length} risks found</span>
+                    {(d.extractedData.fields ?? []).slice(0, 4).map((f, i) => <span key={f.field ?? i} className="rounded-full bg-muted px-2 py-0.5 font-mono text-[9px]">{f.field}={String(f.value ?? "—").slice(0, 14)}</span>)}
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">conf ≥ {Math.min(...(d.extractedData.fields ?? [0]).map(f => f.confidence ?? 1)).toFixed(2)}</span>
+                    {(d.extractedData.risks ?? []).filter(r => !/^No material/.test(r)).length > 0 && (
+                      <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-700 dark:rose-300">{(d.extractedData.risks ?? []).filter(r => !/^No material/.test(r)).length} risks found</span>
                     )}
                   </div>
                   {/* v8: every risk this document contributed to the register */}
-                  {d.extractedData.risks.filter(r => !/^No material/.test(r)).length > 0 && (
+                  {(d.extractedData.risks ?? []).filter(r => !/^No material/.test(r)).length > 0 && (
                     <details className="mt-2 rounded-lg bg-muted/40 px-2.5 py-1.5">
-                      <summary className="cursor-pointer text-[10.5px] font-bold text-foreground/80">Risks extracted from this document ({d.extractedData.risks.filter(r => !/^No material/.test(r)).length})</summary>
+                      <summary className="cursor-pointer text-[10.5px] font-bold text-foreground/80">Risks extracted from this document ({(d.extractedData.risks ?? []).filter(r => !/^No material/.test(r)).length})</summary>
                       <ul className="mt-1.5 space-y-1">
-                        {d.extractedData.risks.filter(r => !/^No material/.test(r)).map((r, i) => <li key={i} className="text-[10px] leading-relaxed text-muted-foreground">• {r}</li>)}
+                        {(d.extractedData.risks ?? []).filter(r => !/^No material/.test(r)).map((r, i) => <li key={i} className="text-[10px] leading-relaxed text-muted-foreground">• {r}</li>)}
                       </ul>
                     </details>
                   )}

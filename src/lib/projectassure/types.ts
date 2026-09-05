@@ -564,7 +564,7 @@ export interface AlertRuleSetting {
 export interface DataMode {
   mode: "simulation" | "connected";
   databaseUrl: boolean;
-  aiProvider: "deterministic" | "z-ai-sandbox" | "gemini" | "openai";
+  aiProvider: "deterministic" | "z-ai-sandbox" | "gemini" | "openai" | "live";
   emailProvider: "outbox" | "smtp";
   lastCheckedAt: string;
 }

@@ -18,7 +18,7 @@ import { computeDelayPrediction, simulateRetrain, MODEL_REGISTRY } from "@/lib/p
 import { buildIndex, type VectorIndex } from "@/lib/projectassure/rag";
 import { nextPortfolioEvent } from "@/lib/projectassure/events";
 import { composeEmail, sendEmail } from "@/lib/projectassure/email";
-import { answerQuestion, buildProjectActionPlan } from "@/lib/projectassure/agent";
+import { answerQuestion, buildProjectActionPlan, buildProjectDossier } from "@/lib/projectassure/agent";
 import { hashPassword, verifyPassword, passwordIssues } from "@/lib/projectassure/auth-crypto";
 import { uid, clamp } from "@/lib/projectassure/format";
 import { geocodeProject } from "@/lib/projectassure/geo";
@@ -86,6 +86,8 @@ interface AppState {
   aiSeedQuestion: string | null;
   aiContextProjectId: string | null;   // v4: project-scoped Intelligence recommended system
   aiLiveMode: boolean;
+  aiStatus: { connected: boolean; label: string; tier: string } | null;  // v11: live-service probe result
+  refreshAiStatus: () => Promise<void>;                                  // v11: probe /api/ai/status (cached server-side)
   exportHistory: { id: string; kind: string; format: string; at: string; by: string; scope: string }[];
   eventTick: number;
 
@@ -242,6 +244,7 @@ export const useApp = create<AppState>()(
       aiLiveMode: false,
       exportHistory: [],
       eventTick: 0,
+      aiStatus: null,
 
       // ─── lifecycle ────────────────────────────────────────────────────────
       boot: () => {
@@ -264,6 +267,8 @@ export const useApp = create<AppState>()(
         if (typeof window !== "undefined") {
           window.addEventListener("hashchange", () => get().parseHash());
         }
+        // v11: probe the live intelligence service once per session
+        void get().refreshAiStatus();
       },
 
       parseHash: () => set({ route: hashToRoute(), paletteOpen: false }),
@@ -755,6 +760,26 @@ export const useApp = create<AppState>()(
         }
       },
 
+      // v11: probe the live intelligence service once per session (server caches
+      // for 90s). If it is connected and the user never chose a mode, live mode
+      // turns itself on — the assistant is at its best out of the box, on any
+      // deployment (sandbox, Vercel with keys, or offline → built-in engine).
+      refreshAiStatus: async () => {
+        try {
+          const res = await fetch("/api/ai/status");
+          const data = await res.json();
+          const status = { connected: !!data.connected, label: String(data.label ?? "built-in engine"), tier: String(data.tier ?? "built-in") };
+          set({ aiStatus: status });
+          let chose: string | null = null;
+          try { chose = localStorage.getItem("projectassure-ai-live"); } catch { /* ignore */ }
+          if (status.connected && chose === null && !get().aiLiveMode) {
+            set({ aiLiveMode: true });
+            set(s => ({ dataMode: { ...s.dataMode, aiProvider: "live" } }));
+            try { localStorage.setItem("projectassure-ai-live", "1"); } catch { /* ignore */ }
+          }
+        } catch { /* offline — the built-in engine serves everything */ }
+      },
+
       ask: async (question) => {
         let threadId = get().chatThreads[0]?.id;
         if (!threadId) threadId = get().createThread();
@@ -765,34 +790,45 @@ export const useApp = create<AppState>()(
         // RBAC v3: answer from the *scoped* portfolio so viewers/stakeholders only
         // ever see projects they are allowed to see (matches the UI claims).
         const scopedList = get().scoped();
-        // v4: project-scoped answering — when the assistant was opened from a
-        // project (or a context chip is active), answer for THAT project using
-        // the detailed Intelligence recommended system, not the whole portfolio.
         const ctxProject = get().aiContextProjectId ? scopedList.find(p => p.id === get().aiContextProjectId) : undefined;
-        if (ctxProject && /plan|should|recommend|next|do|assess|advice|why|risk|status|report/i.test(question)) {
-          const scopedQ = `${question.replace(/^\s*(for|about|on)\s+.*$/i, "").trim()} — ${ctxProject.name}`;
-          answer = buildProjectActionPlan(ctxProject, get().vectorIndex);
-          const trace0 = answer.toolCalls[0];
-          if (trace0) trace0.args = `context: ${ctxProject.psId} · ${scopedQ.slice(0, 80)}`;
-        }
-        if (!answer && get().aiLiveMode) {
-          // compact grounded snapshot: exceptions + key projects (R1 grounding)
+
+        // v11: LIVE SERVICE FIRST — when live mode is on, the live model answers
+        // grounded on the FULL project dossier (documents' real text, live risk
+        // register, milestones, budget, alerts, KPIs, pending approvals and the
+        // engine's own computed recommended actions) plus a compact portfolio
+        // snapshot. The prompt enforces short, decision-shaped answers; if the
+        // service fails or is off, the deterministic engine answers as before.
+        if (get().aiLiveMode) {
           const snapshot = scopedList.slice().sort((a, b) => a.healthScore - b.healthScore).slice(0, 10).map(p =>
             `${p.psId} "${p.name}" | ${p.district}, ${p.state} | ${p.sector} | status ${p.status} | health ${p.healthScore} (${p.healthStatus}) S${p.scheduleScore}/B${p.budgetScore}/R${p.resourceScore}/M${p.milestoneScore} | progress ${p.progress}% | sanction ₹${p.totalBudget}L spent ₹${p.spentBudget}L projected ₹${p.projectedBudget}L | delay ${p.prediction ? Math.round(p.prediction.probability * 100) + "% " + p.prediction.estimatedDays + "d CI" + p.prediction.ciLower + "-" + p.prediction.ciUpper : "n/a"} | top factor: ${p.prediction?.factors[0]?.label ?? "n/a"} | unread alerts: ${p.alerts.filter(a => !a.isRead).map(a => a.title).join("; ") || "none"} | latest doc: ${p.documents[0]?.fileName ?? "none"}`).join("\n");
+          const dossier = ctxProject ? buildProjectDossier(ctxProject, scopedList) : "";
           try {
             const res = await fetch("/api/ai/chat", {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ question, user: { name: get().user?.name, role: get().user?.role }, context: (ctxProject
-                ? `FOCUS PROJECT (answer for THIS project only):\n${ctxProject.psId} "${ctxProject.name}" | ${ctxProject.district}, ${ctxProject.state} | ${ctxProject.sector} | status ${ctxProject.status} | health ${ctxProject.healthScore} (${ctxProject.healthStatus}) S${ctxProject.scheduleScore}/B${ctxProject.budgetScore}/R${ctxProject.resourceScore}/M${ctxProject.milestoneScore} | progress ${ctxProject.progress}% | sanction ₹${ctxProject.totalBudget}L spent ₹${ctxProject.spentBudget}L | milestones delayed ${ctxProject.milestones.filter(m => m.status === "DELAYED" || m.status === "BLOCKED").length} | unread alerts ${ctxProject.alerts.filter(a => !a.isRead).length} | KPIs ${(ctxProject.kpis ?? []).map(k => `${k.name} ${k.actual}/${k.target} ${k.unit}`).join("; ")}\n\nPORTFOLIO CONTEXT (${scopedList.length} projects):\n${snapshot}`
-                : `PORTFOLIO (${scopedList.length} projects, worst first):\n${snapshot}`) }),
+              body: JSON.stringify({
+                question, user: { name: get().user?.name, role: get().user?.role },
+                context: `PORTFOLIO (${scopedList.length} projects, worst first):\n${snapshot}`,
+                dossier,
+              }),
             });
-            const data = await res.json();
-            if (data && data.answer) {
-              answer = { answer: data.answer, toolCalls: data.toolCalls ?? [], citations: data.citations ?? [], intent: data.intent ?? "live", dataFreshness: data.freshness ?? "", grounded: true, source: "live-llm" as const };
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.answer) {
+                answer = { answer: data.answer, toolCalls: data.toolCalls ?? [], citations: data.citations ?? [], intent: data.intent ?? "live", dataFreshness: data.freshness ?? "", grounded: true, source: "live-llm" as const };
+              }
             }
-          } catch { /* fall through to deterministic */ }
+          } catch { /* fall through to the deterministic engine */ }
         }
-        if (!answer) answer = answerQuestion(question, scopedList, get().vectorIndex);
+
+        // Deterministic path (live mode off, or the live service was unavailable):
+        if (!answer) {
+          if (ctxProject && /plan|should|recommend|next|do|assess|advice|why|risk|status|report/i.test(question)) {
+            answer = buildProjectActionPlan(ctxProject, get().vectorIndex);
+            const trace0 = answer.toolCalls[0];
+            if (trace0) trace0.args = `context: ${ctxProject.psId} · ${question.slice(0, 80)}`;
+          }
+          if (!answer) answer = answerQuestion(question, scopedList, get().vectorIndex);
+        }
 
         const aiMsg: ChatMessage = { id: uid("msg"), role: "assistant", content: answer.answer, answer, createdAt: new Date().toISOString() };
         set(s => ({ chatThreads: s.chatThreads.map(t => t.id === threadId ? { ...t, messages: cap([...t.messages, aiMsg], 30), updatedAt: new Date().toISOString() } : t) }));
@@ -922,7 +958,7 @@ export const useApp = create<AppState>()(
       stats: () => computePortfolioStats(get().scoped()),
     }),
     {
-      name: "projectassure-store-v12",
+      name: "projectassure-store-v13",
       version: STORE_VERSION,
       // v9 identity release (v12): key renamed so old sessions boot into the
       // refreshed world (intelligence terminology, SIH-portal branding)

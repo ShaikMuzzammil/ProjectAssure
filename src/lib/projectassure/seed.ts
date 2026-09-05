@@ -417,9 +417,14 @@ export function buildWorld(): { projects: Project[]; globalAudit: AuditLogEntry[
     status: "PROCESSED", totalPages: 6, ocrConfidence: 0.97,
     summary: "Policy extract: flash-report SLAs, 10%/20% overrun escalation bands, time-overrun reporting rules — the source of the platform's alert thresholds.",
     extractedData: {
-      fields: [["flash_report_sla", "7 working days", 0.97, 1], ["overrun_watch_band", ">10%", 0.96, 2], ["escalation_band", ">20% to CCEA", 0.96, 2]],
+      fields: [
+        { field: "flash_report_sla", value: "7 working days", confidence: 0.97, sourcePage: 1 },
+        { field: "overrun_watch_band", value: ">10%", confidence: 0.96, sourcePage: 2 },
+        { field: "escalation_band", value: ">20% to CCEA", confidence: 0.96, sourcePage: 2 },
+      ],
       keyFindings: ["10% OVERUN-WATCH", "20% Cabinet escalation"], risks: ["Accountability remains with the officer"],
-    } as unknown as DocumentItem["extractedData"],
+      sentiment: { score: 0.2, label: "neutral" },
+    },
     text: POLICY_NOTE, processingMs: 21000,
   };
   projects[0].documents.push(policy);

@@ -14,6 +14,7 @@ import {
   buildRecommendedActions, buildRootCauseTree, projectNoActionImpact,
   buildExecutiveSummary,
 } from "./recommendations";
+import { deriveChangeOrders } from "./monitor";
 
 export const QUICK_ACTIONS = [
   "Why is Bharatmala P-4 at risk?",
@@ -287,4 +288,95 @@ export function buildProjectActionPlan(p: Project, vectorIndex: VectorIndex | nu
   body += `*Advisory output — rule R10: verify with the responsible officer (${p.projectManager}) before escalation.*`;
 
   return { answer: body, toolCalls: calls, citations, intent: "action_plan", dataFreshness: freshness, grounded: true, source: "deterministic" };
+}
+
+// ─── v11: FULL PROJECT DOSSIER for the live intelligence service ────────────
+// The complete, self-contained ground truth of ONE project: identity, scores,
+// budget, milestones, prediction, live risk register, every document's REAL
+// text, alerts, KPIs, pending approvals (change orders) and the engine's own
+// computed recommended actions. Sent to /api/ai/chat as `dossier` so the live
+// model analyses THIS project end-to-end instead of a one-line snapshot.
+export function buildProjectDossier(p: Project, allProjects: Project[]): string {
+  const L: string[] = [];
+  const ov = p.totalBudget > 0 ? ((p.projectedBudget - p.totalBudget) / p.totalBudget) * 100 : 0;
+
+  // 1 · identity
+  L.push(`## PROJECT DOSSIER — ${p.psId} "${p.name}"`);
+  L.push(`${p.district}, ${p.state} · ${p.sector.toUpperCase()} · status ${p.status} · manager ${p.projectManager} · contractor ${p.contractor ?? "TBD"}`);
+  L.push(`Health ${p.healthScore}/100 (${p.healthStatus}) · sub-scores: schedule ${p.scheduleScore}, budget ${p.budgetScore}, resources ${p.resourceScore}, milestones ${p.milestoneScore} · physical progress ${p.progress}% · target ${shortDate(p.targetDate)}`);
+
+  // 2 · budget
+  L.push(`\nBUDGET: sanction ${inr(p.totalBudget)} · spent ${inr(p.spentBudget)} (${Math.round((p.spentBudget / Math.max(1, p.totalBudget)) * 100)}%) · projected final ${inr(p.projectedBudget)} (${ov >= 0 ? "+" : ""}${ov.toFixed(1)}% vs sanction)`);
+
+  // 3 · milestones
+  const delayed = p.milestones.filter(m => m.status === "DELAYED" || m.status === "BLOCKED");
+  L.push(`\nMILESTONES: ${p.milestones.length} total, ${delayed.length} delayed/blocked (${p.milestones.filter(m => (m.status === "DELAYED" || m.status === "BLOCKED") && m.isCritical).length} on the critical path).`);
+  for (const m of delayed.slice(0, 6)) {
+    const daysLate = Math.max(0, Math.round((Date.now() - +new Date(m.plannedDate)) / 864e5));
+    L.push(`- ${m.isCritical ? "[CRITICAL] " : ""}${m.name} — ${m.status.toLowerCase()}, planned ${shortDate(m.plannedDate)}, now ~${daysLate}d late, weight ${m.weight}%.`);
+  }
+
+  // 4 · prediction
+  if (p.prediction) {
+    const pr = p.prediction;
+    L.push(`\nDELAY PREDICTION (${pr.modelVersion}${pr.isBaseline ? ", baseline" : ""}): probability ${Math.round(pr.probability * 100)}%, slip ${pr.estimatedDays}d, 90% CI ${pr.ciLower}–${pr.ciUpper}d, confidence ${Math.round(pr.confidence * 100)}%. Factors:`);
+    for (const f of pr.factors.slice(0, 5)) L.push(`- ${f.label} (${f.valueLabel}) — ${f.plainLanguage}`);
+  } else {
+    L.push(`\nDELAY PREDICTION: none active (project not in execution — run Score now to get the baseline).`);
+  }
+
+  // 5 · risk register
+  const ra = p.riskAssessment;
+  if (ra) {
+    L.push(`\nLIVE RISK REGISTER — overall ${ra.riskLevel} (${ra.overallRisk}/100): schedule ${ra.scheduleRisk}, budget ${ra.budgetRisk}, resources ${ra.resourceRisk}.`);
+    for (const f of ra.factors.slice(0, 8)) L.push(`- ${f.factor} (impact ${f.impact}/100) — ${f.description}`);
+  }
+
+  // 6 · documents with REAL text
+  L.push(`\nDOCUMENTS (${p.documents.length}) — full extracted text follows each summary:`);
+  for (const d of p.documents.slice(0, 6)) {
+    L.push(`- [${d.fileName}] ${d.fileType.toUpperCase()} · ${d.totalPages}p · uploaded ${shortDate(d.uploadedAt)} · status ${d.status}`);
+    if (d.extractedData?.fields?.length) L.push(`  fields: ${d.extractedData.fields.map(f => `${f.field}=${f.value} (conf ${Math.round(f.confidence * 100)}%)`).join("; ")}`);
+    if (d.extractedData?.risks?.length) L.push(`  risks found: ${d.extractedData.risks.slice(0, 8).join(" | ")}`);
+    if (d.text) L.push(`  TEXT: ${d.text.slice(0, 1300).replace(/\s+/g, " ")}${d.text.length > 1300 ? " [trimmed]" : ""}`);
+  }
+
+  // 7 · alerts
+  const open = p.alerts.filter(a => !a.isRead);
+  if (open.length) {
+    L.push(`\nOPEN ALERTS (${open.length}):`);
+    for (const a of open.slice(0, 5)) L.push(`- [${a.severity}] ${a.title} — ${a.description.slice(0, 160)} → do: ${a.recommendedAction} (owner ${a.recommendedOwner}, ${a.recommendedDeadline})`);
+  }
+
+  // 8 · KPIs
+  if (p.kpis?.length) {
+    L.push(`\nKPIs (physical reality, not money): ${p.kpis.slice(0, 5).map(k => `${k.name} ${k.actual}/${k.target}${k.unit ? " " + k.unit : ""}`).join("; ")}`);
+  }
+
+  // 9 · pending approvals (deterministic change orders for this project)
+  const cos = deriveChangeOrders([p]);
+  const pending = cos.filter(c => c.status === "Pending" || c.status === "Under Review");
+  if (pending.length) {
+    L.push(`\nPENDING APPROVALS / CHANGE ORDERS (${pending.length}) — the officer can approve, hold or reject these:`);
+    for (const c of pending) {
+      L.push(`- ${c.id} "${c.description}" — cost impact ${inr(c.costImpact)} (+${c.costImpactPct}%), schedule impact ${c.scheduleImpactDays}d, risk ${c.risk}, status ${c.status}. Evidence chain on file: request → justification → engineer verification.`);
+    }
+    L.push(`When asked about approving, give a clear recommendation and the single missing item that would settle it.`);
+  }
+
+  // 10 · engine-computed recommended actions (ground truth for "what should I do")
+  const acts = buildRecommendedActions(p);
+  if (acts.length) {
+    L.push(`\nENGINE-COMPUTED RECOMMENDED ACTIONS (ranked):`);
+    for (const a of acts.slice(0, 5)) {
+      L.push(`- P${a.priority} ${a.title}: ${a.what} → ${a.action} (owner ${a.owner}, by ${a.deadline}, impact ${a.expectedImpact})`);
+    }
+  }
+
+  // 11 · portfolio context (one line each, worst first)
+  const peers = allProjects.slice().sort((a, b) => a.healthScore - b.healthScore).slice(0, 8)
+    .map(x => `${x.psId} "${x.name}" health ${x.healthScore} ${x.healthStatus} · ${x.progress}% · delay ${x.prediction ? Math.round(x.prediction.probability * 100) + "%" : "n/a"}`);
+  L.push(`\nPORTFOLIO CONTEXT (for comparison only, worst 8 of ${allProjects}): ${peers.join(" | ")}`);
+
+  return L.join("\n").slice(0, 26000);
 }

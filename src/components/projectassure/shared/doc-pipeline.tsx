@@ -6,7 +6,7 @@ import type { Project, DocumentItem } from "@/lib/projectassure/types";
 import { STAGES, extractRawText, structureFields, makeDocument, fileKind } from "@/lib/projectassure/ocr";
 import { useApp } from "@/store/app-store";
 import { toast } from "sonner";
-import { UploadCloud, FileText, ScanText, BrainCircuit, ShieldCheck, RefreshCw, Check, Loader2 } from "lucide-react";
+import { UploadCloud, FileText, ScanText, BrainCircuit, ShieldCheck, RefreshCw, Check, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { bytes as fmtBytes } from "@/lib/projectassure/format";
 
@@ -14,6 +14,7 @@ const STAGE_ICONS = [UploadCloud, ScanText, BrainCircuit, ShieldCheck, RefreshCw
 
 export default function DocPipeline({ project, compact = false }: { project: Project; compact?: boolean }) {
   const ingestDocument = useApp(s => s.ingestDocument);
+  const askAi = useApp(s => s.askAi);
   const user = useApp(s => s.user)!;
   const [target, setTarget] = useState<Project>(project);
   const [stage, setStage] = useState(-1); // -1 idle, 0..4 running, 5 done
@@ -146,6 +147,15 @@ export default function DocPipeline({ project, compact = false }: { project: Pro
           <div className="mt-2.5 text-[10.5px] text-muted-foreground">
             Sentiment: {result.extractedData?.sentiment.label} ({result.extractedData?.sentiment.score}) · key findings: {result.extractedData?.keyFindings[2] ?? "captured"} · vault & search index updated · uploaded by {user.name}
           </div>
+          {/* v11: hand the document straight to the intelligence service — the
+              dossier it receives includes THIS document's full text, so the
+              answer is grounded on what the file actually says. */}
+          <button
+            onClick={() => askAi(`Analyse the document "${result.fileName}" for this project: summarise what it says, list the risks it evidences, and tell me the one action I should take first.`, target.id)}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-[#0c93e7]/40 bg-[#0c93e7]/5 py-2.5 text-[12px] font-semibold text-[#015ca0] transition hover:bg-[#0c93e7]/10 dark:text-[#7cc8fb]"
+          >
+            <Sparkles className="h-3.5 w-3.5" /> Ask Assure Intelligence about this document
+          </button>
         </motion.div>
       )}
     </div>

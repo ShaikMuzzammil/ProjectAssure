@@ -19,10 +19,14 @@ export default function AiAssistantView() {
   const createThread = useApp(s => s.createThread);
   const deleteThread = useApp(s => s.deleteThread);
   const aiLiveMode = useApp(s => s.aiLiveMode);
+  const aiStatus = useApp(s => s.aiStatus);
+  const refreshAiStatus = useApp(s => s.refreshAiStatus);
   // v3: live mode preference survives reload (was ephemeral → “toggle doesn't work” complaint)
   useEffect(() => {
     try { if (localStorage.getItem("projectassure-ai-live") === "1") useApp.setState({ aiLiveMode: true }); } catch { /* ignore */ }
-  }, []);
+    // v11: probe the live service and auto-enable live mode when connected
+    void refreshAiStatus();
+  }, [refreshAiStatus]);
   const setDataMode = useApp(s => s.setDataMode);
   const vectorIndex = useApp(s => s.vectorIndex);
   const projects = useApp(s => s.scoped)();
@@ -63,14 +67,17 @@ export default function AiAssistantView() {
         </div>
         <div className="flex items-center gap-3 rounded-xl border bg-card px-3.5 py-2.5">
           <div className="text-right">
-            <div className="text-[11.5px] font-bold">Live intelligence mode</div>
-            <div className="text-[10px] text-muted-foreground">{aiLiveMode ? "live intelligence service with automatic safe fallback" : "built-in engine — works offline, same grounding"}</div>
+            <div className="flex items-center justify-end gap-1.5 text-[11.5px] font-bold">
+              Live intelligence mode
+              <span className={cn("inline-block h-2 w-2 rounded-full", aiLiveMode && aiStatus?.connected ? "bg-emerald-500" : aiLiveMode ? "bg-amber-500" : "bg-muted-foreground/40")} />
+            </div>
+            <div className="text-[10px] text-muted-foreground">{aiLiveMode ? (aiStatus?.connected ? "connected — live answers grounded on the full project dossier" : "connecting — falls back to the built-in engine if unavailable") : "built-in engine — works offline, same grounding"}</div>
           </div>
           <Switch checked={aiLiveMode} onCheckedChange={v => {
-            setDataMode({ aiProvider: v ? "gemini" : "deterministic" });
+            setDataMode({ aiProvider: v ? "live" : "deterministic" });
             useApp.setState({ aiLiveMode: v });
             try { localStorage.setItem("projectassure-ai-live", v ? "1" : "0"); } catch { /* ignore */ }
-            toast.info(v ? "Live mode enabled — if the live service is unavailable it auto-falls back to the built-in engine" : "Built-in engine — fully offline, jury-safe");
+            toast.info(v ? "Live mode enabled — answers come from the live intelligence service, grounded on this project's full dossier" : "Built-in engine — fully offline, jury-safe");
           }} />
         </div>
       </div>
