@@ -1,112 +1,209 @@
-# 🛡️ ProjectAssure Prototype (main app with integrated Admin Control)
+# ProjectAssure — Main App (v21)
 
-> **Single deployment** — the Admin Control plane is now a view INSIDE the main
-> app, accessible from the sidebar when signed in as the Portfolio Overseer
-> (ADMIN role). No more separate Vercel project — one repo, one deployment,
-> one web address.
+Intelligence-powered predictive project monitoring platform
+Smart India Hackathon 2026 · SIH26103 · Team NEXGEN
 
 ---
 
-## Quick start (local)
+## What this app does (in 5 lines)
+
+- Reads monthly project reports (PDF / Excel / scans) automatically
+- Scores every project 0–100 with 18 live signals
+- Predicts delays 30–60 days early (real ML, real held-out metrics)
+- Sends alerts + emails with an action, owner and deadline
+- Gives citizens a public spending page — no login needed
+
+---
+
+## Quick start
 
 ```bash
 cd prototype
 npm install --legacy-peer-deps
 npm run dev
-# → http://localhost:3000 → “Launch demo” → pick the "Portfolio Overseer" persona → sign in with password "overseer"
-# → Click "Admin Control" in the sidebar (landmark icon) → the integrated control plane opens with 6 tabs
 ```
 
-Zero configuration needed: with **no API keys at all** the app runs its built-in
-engine + demo world completely offline (jury-safe). Add keys to upgrade
-individual subsystems — the app detects them automatically and shows live status.
+Open → http://localhost:3000
+
+No API keys? Everything still works offline (built-in engine + demo world).
+Add keys later → subsystems switch to live mode automatically.
 
 ---
 
-## What's new (v17)
+## Logins
 
-| # | Change | Where |
-|---|---|---|
-| 1 | **Landing page restored** — the v12 stacked layout is back (Problem → Solution pillars → 7 Features → Workflow → Trust → CTA), the corner "Full overview" toggle button is gone | `src/components/projectassure/landing/landing-view.tsx` |
-| 2 | **Admin Control integrated as a view** — the host-control is no longer a separate project; it's a sidebar item ("Admin Control", landmark icon) that opens a 6-tab cockpit inside the main app | `src/components/projectassure/views/admin-control-view.tsx` (new) · `src/components/projectassure/shell/app-shell.tsx` (sidebar entry + view switch) · `src/lib/projectassure/types.ts` (new `"admin-control"` ViewId) · `src/lib/projectassure/permissions.ts` (ADMIN-only access) · `src/store/app-store.ts` (route title) |
-| 3 | **host-control subfolder removed** — no more separate Vercel project; one repo, one deployment | (removed `prototype/host-control/`) |
-
----
-
-## Admin Control — 6 tabs
-
-When signed in as the Portfolio Overseer (ADMIN), the sidebar shows a new
-"Admin Control" item (landmark icon). Clicking it opens the integrated control
-plane with 6 tabs:
-
-| Tab | What it shows |
-|---|---|
-| **Mission Dashboard** | 4 KPI tiles (Total Projects · Total Sanctioned · Open Alerts · Pending Approvals) + health-band distribution (Green/Amber/Red) + Top 5 at-risk projects + live activity feed (latest 8 audit events) |
-| **Approval Centre** | Every pending change order, budget increase, extension of time and procurement request — approve/reject with a decision note (audit-logged). Filter by PENDING / APPROVED / REJECTED / ALL |
-| **Budget Risk** | Org-wide budget utilisation gauge + variance % + projected outturn + Top 5 budget overruns (with variance bars) + current threshold config (amber/red/warn/critical) |
-| **Alerts Aggregation** | Every alert across every project in one feed. Severity-ranked, with pathway badges (DEMO / FRESH / BROADCAST), recommended action, owner and deadline. Filter by severity |
-| **User Management** | Every user (demo + registered) with role, source badge, designation, email, project count, last-active stamp |
-| **Audit Trail** | Append-only log of every action — admin decisions, mutations, exports, logins. Searchable |
-
----
-
-## Deploy to Vercel (ONE project)
-
-1. `cd prototype`
-2. Push this folder to a GitHub repo.
-3. [vercel.com/new](https://vercel.com/new) → import the repo → **Deploy**.
-4. Vercel auto-detects Next.js from the root `package.json`.
-5. Vercel → Settings → Environment Variables → add any optional keys → Redeploy.
-
-One web address, one deployment, one codebase. The Admin Control plane is just
-another view in the same app — no separate project needed.
-
----
-
-## Optional environment variables
-
-See `.env.example` for the full annotated template. The TL;DR:
-
-| Purpose | Key | Free? | Where |
+| Who | Email | Password | Route |
 |---|---|---|---|
-| Live intelligence (Gemini) | `GEMINI_API_KEY` | ✅ free | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| Fallback 1 (Groq) | `GROQ_API_KEY` | ✅ free | [console.groq.com/keys](https://console.groq.com/keys) |
-| Fallback 2 (OpenRouter) | `OPENROUTER_API_KEY` | ✅ free | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
-| Real outbound email | `EMAIL_USER`+`EMAIL_PASS` (or `BREVO_API_KEY` / `RESEND_API_KEY`) | ✅ free | see `.env.example` |
-| Server-side per-user data | `DATABASE_URL` (Neon) | ✅ free | [neon.tech](https://neon.tech) |
+| Portfolio Overseer (ADMIN) | arun.kulkarni@mospi.gov.in | overseer | #/demo |
+| Project Manager | priya.venkatesh@mospi.gov.in | minister | #/demo |
+| Data Analyst | sneha.iyer@mospi.gov.in | analyst | #/demo |
+| Strategic Observer | meera.nair@pmo.gov.in | observer | #/demo |
+| New users | your own email | your own password | #/login → Create account |
 
-With **zero env vars** the app runs in offline/built-in mode (jury-safe).
-
----
-
-## Demo credentials
-
-The main app ships with 4 demo personas (visible on the About page after clicking "Reveal demo users"):
-- `overseer` — The Portfolio Overseer (ADMIN) ← **this is the persona that sees Admin Control**
-- `minister` — The Ministry Project Manager (PROJECT_MANAGER)
-- `analyst` — The MoSPI Data Analyst (STAKEHOLDER)
-- `observer` — The Strategic Observer (VIEWER)
+- Demo personas → #/demo (one click, separate route)
+- Fresh accounts → #/login → Create new account
+- Notifications are private per user — demo traffic and real users never mix
 
 ---
 
-## The 7 main-app features + Admin Control
+## Routes (hash-based)
 
-| # | Feature | What it does |
-|---|---|---|
-| 1 | **Dashboard** | 4 big numbers + live feed of the whole portfolio |
-| 2 | **Projects** | grid/folder views → 6-step wizard → full workspace with documents, risks, Gantt, budget |
-| 3 | **Assure Intelligence** | universal mode + file upload + conversation export |
-| 4 | **AssurePredict 2.3** | 18-signal delay/cost prediction with explainable factors |
-| 5 | **Reports & Exports** | pick **what** to export → PDF · Excel · CSV |
-| 6 | **Email Centre** | real outbound email when keys are set, honest outbox simulation otherwise |
-| 7 | **Help & Guide** | every workflow documented with one line each |
-| 8 | **Admin Control** | integrated control plane — Mission Dashboard, Approval Centre, Budget Risk, Alerts Aggregation, User Management, Audit Trail (ADMIN only) |
+```
+#/                 → landing page
+#/about            → about the team
+#/demo             → 4 demo personas (one-click entry)
+#/login            → sign in / create account
+#/public           → citizen transparency page (no login)
+#/app/monitor      → dashboard (after login)
+#/app/projects     → projects + map + create
+#/app/ai-assistant → Assure Intelligence (chat + file upload)
+#/app/model-lab    → Prediction Engine (ML Lab)
+#/app/reports      → report factory + document pipeline
+#/app/alerts       → early warning centre + broadcast
+#/app/email-center → outbox + settings
+#/app/project-detail/<id>/<tab>  → one project (10 tabs + Site Evidence)
+```
 
 ---
 
-## Stack (honest version — in docs, masked in the UI)
+## How the data flows (the honest map)
 
-Next.js 16 (App Router) · TypeScript · Tailwind CSS · Zustand · Prisma (optional
-Neon PostgreSQL) · Gemini/Groq/OpenRouter/OpenAI provider chain · in-browser
-document reading + 45-pattern risk scanner · deterministic 18-signal prediction
-engine · PDF/Excel/CSV export · Sonner toasts · Framer Motion · Recharts.
+```
+Browser (this app)
+  │
+  ├── your projects, users, notifications
+  │   └─ stored in browser localStorage (per user)
+  │
+  ├── every change → POST /api/sync/push      (same origin, always works)
+  │                   └─ Sync Hub keeps the live mirror
+  │
+  ├── Host Control reads → GET /api/sync/state   (server-to-server)
+  │
+  ├── Host Control sends → POST /api/sync/webhook (broadcasts / user alerts)
+  │
+  └── logged-in browsers poll → GET /api/sync/commands (every 20s)
+       └─ host broadcasts appear as real notifications
+```
+
+---
+
+## Prediction Engine (ML Lab) — what is real
+
+```
+1. Data        → 18 signals + honest labels from milestone history
+2. Split       → 70/30 (test set = real projects only)
+3. Train       → logistic regression OR boosted stumps (in-browser)
+4. Evaluate    → real AUC / accuracy / F1 / confusion / calibration
+5. Promote     → champion re-scores every live prediction
+6. Simulate    → 5,000-run Monte Carlo (P50/P80/P95 + tornado)
+7. Forecast    → Holt damped trend + confidence bands
+8. Drift       → PSI per feature vs the seeded anchor
+```
+
+Every metric shown is computed on held-out data. Nothing is hardcoded.
+
+---
+
+## Geo-tagged site evidence
+
+```
+Photo upload → EXIF GPS + timestamp parsed in-browser
+            → haversine distance to project site
+            → VERIFIED (≤2 km) / NEAR_SITE (≤10 km) / GPS_MISMATCH / STALE
+            → PM or ADMIN accepts / rejects (audit-logged)
+```
+
+No camera GPS? Capture a live browser location first (button in the panel).
+
+---
+
+## AI (Assure Intelligence)
+
+```
+Chat question + attached files
+  → /api/ai/files      (PDF / XLSX / images parsed for real)
+  → /api/ai/chat       (Gemini → Groq → OpenRouter → OpenAI → z-ai sandbox)
+  → answer with sources + freshness stamp
+  → no provider? built-in deterministic engine answers offline
+```
+
+- Project mode = grounded on your live portfolio
+- Universal mode = general questions + uploaded files as context
+- Both work. Files persist across reloads. Threads are switchable.
+
+---
+
+## Email (real delivery)
+
+```
+/api/email/send tries in order:
+  1. SMTP  (EMAIL_USER + EMAIL_PASS, Gmail App Password works)
+  2. Brevo (BREVO_API_KEY — 300 mails/day free)
+  3. Resend (RESEND_API_KEY)
+  4. Outbox (honest SIMULATED + how-to hint)
+```
+
+Report emails carry the REAL generated PDF as an attachment.
+
+---
+
+## Environment variables (all optional)
+
+```
+GEMINI_API_KEY=        # live AI answers
+GROQ_API_KEY=          # backup AI
+OPENROUTER_API_KEY=    # backup AI
+OPENAI_API_KEY=        # backup AI
+DATABASE_URL=          # optional Postgres mirror (Prisma)
+EMAIL_USER=            # SMTP login
+EMAIL_PASS=            # SMTP app password
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+BREVO_API_KEY=         # email provider 2
+RESEND_API_KEY=        # email provider 3
+SYNC_TOKEN=            # shared secret with Host Control (optional)
+HOST_ORIGIN=           # host-control origin for CORS (optional)
+```
+
+See `.env.example`.
+
+---
+
+## Deploy to Vercel (from GitHub)
+
+```
+1. Push this folder to GitHub           (repo root = this folder or set Root Directory = prototype)
+2. vercel.com → Add New → Project       → import the repo
+3. Root Directory: prototype
+4. Framework: Next.js (auto)
+5. Environment Variables: paste the keys you have (all optional)
+6. Deploy
+```
+
+- Build: `next build` (auto)
+- Zero keys = zero cost, still fully working
+- After deploy: set MAIN_PROJECT_URL in Host Control to this URL
+
+---
+
+## Scripts
+
+```bash
+npm run dev        # local dev on :3000
+npm run build      # production build
+npm run start      # run the production build
+npm run db:push    # apply Prisma schema (needs DATABASE_URL)
+npm run lint       # eslint
+```
+
+---
+
+## Tech stack (short)
+
+Next.js 16 · React 19 · TypeScript · Tailwind 4 · Zustand (persist)
+Recharts · jsPDF · SheetJS · Nodemailer · Prisma · z-ai-web-dev-sdk
+ML: hand-written logistic regression + boosted stumps + Monte Carlo + Holt + PSI
+
+---
+
+ProjectAssure · SIH 2026 · SIH26103 · Team NEXGEN · Amrita Vishwa Vidyapeetham Chennai

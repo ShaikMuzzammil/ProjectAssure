@@ -57,14 +57,17 @@ export function buildEmail(template: EmailTemplateId, ctx: Partial<{ project: Pr
 
 export function composeEmail(opts: {
   to: string; toName?: string; template: EmailTemplateId; subject?: string; body?: string;
-  attachments?: EmailAttachment[]; projectId?: string; project?: Project; stats?: PortfolioStats; reportName?: string; docName?: string; user?: User;
+  attachments?: EmailAttachment[]; attachmentBase64?: string; projectId?: string; project?: Project; stats?: PortfolioStats; reportName?: string; docName?: string; user?: User;
 }): EmailMessage {
   const built = buildEmail(opts.template, { project: opts.project, stats: opts.stats, reportName: opts.reportName, docName: opts.docName, user: opts.user, customSubject: opts.subject, customBody: opts.body });
   return {
     id: uid("em"), to: opts.to, toName: opts.toName,
     subject: opts.subject ?? built.subject, body: opts.body ?? built.body,
     template: opts.template, status: "QUEUED", createdAt: new Date().toISOString(),
-    attachments: opts.attachments ?? [], projectId: opts.projectId,
+    attachments: opts.attachmentBase64 && opts.attachments?.length
+      ? opts.attachments.map(a => ({ ...a, base64: opts.attachmentBase64, contentType: a.contentType ?? "application/pdf" }))
+      : (opts.attachments ?? []),
+    projectId: opts.projectId,
   };
 }
 
@@ -77,7 +80,12 @@ export async function sendEmail(msg: EmailMessage): Promise<EmailMessage> {
   try {
     const res = await fetch("/api/email/send", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to: msg.to, toName: msg.toName, subject: msg.subject, body: msg.body, template: msg.template, attachments: msg.attachments }),
+      body: JSON.stringify({
+        to: msg.to, toName: msg.toName, subject: msg.subject, body: msg.body, template: msg.template,
+        attachments: msg.attachments
+          .filter(a => a.base64)
+          .map(a => ({ filename: a.name, contentType: a.contentType ?? "application/pdf", base64: a.base64 })),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.sent) return { ...msg, status: "SENT", sentAt: new Date().toISOString(), provider: data.provider ?? "smtp-gmail" };

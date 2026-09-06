@@ -25,7 +25,7 @@ export default function GanttTimeline({ project }: { project: Project }) {
     return { min, max: Math.max(max, min + 60 * DAY) };
   }, [tasks, milestones]);
 
-  const now = new Date("2026-09-10T09:00:00+05:30").getTime();
+  const now = new Date().getTime(); // v21: real current date (was frozen at the demo anchor)
   const span = bounds.max - bounds.min;
   const px = (t: number) => ((t - bounds.min) / span) * 100;
   const totalDays = Math.round(span / DAY);

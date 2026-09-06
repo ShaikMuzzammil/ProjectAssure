@@ -24,21 +24,39 @@ import {
 // through with a placeholder text describing the file (the live model can
 // still infer structure from the file name + description, and the user is
 // invited to paste the relevant excerpt).
-async function extractFileText(file: File): Promise<string> {
+async function extractFileText(file: File): Promise<{ text: string; engine: string; fields?: Record<string, string>; risks?: string[] }> {
   const name = file.name.toLowerCase();
-  const textLike = /\.(txt|md|csv|json|log|tsv|yaml|yml|xml|html|js|ts|py|sql|sh)$/i.test(name);
-  if (textLike) {
+  const textLike = /\.(txt|md|markdown|csv|tsv|json|log|yaml|yml|xml|html|htm|js|ts|tsx|jsx|py|sql|sh|ini|cfg|rpt)$/i.test(name);
+  if (textLike && file.size <= 256 * 1024) {
     try {
       const buf = await file.slice(0, 64 * 1024).text();   // up to 64KB
-      return buf;
+      return { text: buf, engine: "text-reader" };
     } catch {
-      return `[Could not read text from ${file.name}]`;
+      return { text: `[Could not read ${file.name}]`, engine: "text-reader" };
     }
   }
-  // For PDF/Excel/Image — we cannot parse fully client-side without heavy deps,
-  // so we surface a structured placeholder the model can still reason about.
-  const ext = name.split(".").pop() ?? "unknown";
-  return `[Uploaded ${ext.toUpperCase()} file: ${file.name} — ${Math.round(file.size / 1024)} KB. The client cannot parse this binary file in-browser; if its content is needed for the answer, ask the user to paste the relevant excerpt, or rely on the project dossier already grounded in this request.]`;
+  // v21: REAL server-side parsing — XLSX via SheetJS, PDF/images via the
+  // document reader (z-ai vision in this sandbox / Gemini keys in production).
+  // The engine used is reported honestly on every attachment toast.
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/ai/files", { method: "POST", body: form });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text && data.text.length > 5) {
+        return { text: data.text, engine: data.engine, fields: data.fields, risks: data.risks };
+      }
+      return {
+        text: `[Uploaded ${file.name} (${Math.round(file.size / 1024)} KB) — the ${data.engine} reader could not extract text in this environment. Ask the user to paste the key excerpt.]`,
+        engine: data.engine || "unavailable",
+      };
+    }
+  } catch { /* offline → fall through */ }
+  return {
+    text: `[Uploaded ${file.name} — ${Math.round(file.size / 1024)} KB. The document reader is unreachable offline; paste the relevant excerpt or retry online.]`,
+    engine: "offline",
+  };
 }
 
 export default function AiAssistantView() {
@@ -56,6 +74,8 @@ export default function AiAssistantView() {
   const attachAiFile = useApp(s => s.attachAiFile);
   const detachAiFile = useApp(s => s.detachAiFile);
   const clearAiFiles = useApp(s => s.clearAiFiles);
+  const aiActiveThreadId = useApp(s => s.aiActiveThreadId);
+  const setActiveThread = useApp(s => s.setActiveThread);
 
   useEffect(() => {
     try { if (localStorage.getItem("projectassure-ai-live") === "1") useApp.setState({ aiLiveMode: true }); } catch { /* ignore */ }
@@ -71,7 +91,8 @@ export default function AiAssistantView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const thread = threads[0];
+  // v21: the ACTIVE thread (was threads[0] — answers landed in the wrong chat)
+  const thread = threads.find(t => t.id === aiActiveThreadId) ?? threads[threads.length - 1];
 
   useEffect(() => {
     if (!threads.length) createThread();
@@ -93,6 +114,7 @@ export default function AiAssistantView() {
   };
 
   // ─── v13: file upload handlers ───
+  // ─── v21: file upload handlers (real server parsing) ───
   const onFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     for (const file of Array.from(files).slice(0, 5)) {
@@ -100,15 +122,26 @@ export default function AiAssistantView() {
         toast.error(`${file.name} is too large`, { description: "Max 5 MB per file" });
         continue;
       }
-      const text = await extractFileText(file);
-      const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+      toast.info(`Reading ${file.name}…`, { description: "Extracting real text on the server" });
+      const { text, engine, fields, risks } = await extractFileText(file);
       const type = /\.(pdf)$/i.test(file.name) ? "pdf"
-        : /\.(xlsx|xls)$/i.test(file.name) ? "xlsx"
+        : /\.(xlsx|xls|xlsm)$/i.test(file.name) ? "xlsx"
         : /\.(csv|tsv)$/i.test(file.name) ? "csv"
         : /\.(png|jpg|jpeg|gif|webp)$/i.test(file.name) ? "image"
         : "text";
-      attachAiFile({ name: file.name, type, size: file.size, text });
-      toast.success(`Attached ${file.name}`, { description: `${Math.round(file.size / 1024)} KB · type ${type}` });
+      const summaryExtras = [
+        fields?.money ? `money: ${fields.money}` : "",
+        fields?.percentages ? `pcts: ${fields.percentages}` : "",
+        fields?.dates ? `dates: ${fields.dates}` : "",
+        risks?.length ? `risk tags: ${risks.join(", ")}` : "",
+      ].filter(Boolean).join(" · ");
+      attachAiFile({
+        name: file.name, type, size: file.size,
+        text: summaryExtras ? `${text}\n\n[Auto-extracted: ${summaryExtras}]` : text,
+      });
+      toast.success(`Attached ${file.name}`, {
+        description: `${Math.round(file.size / 1024)} KB · read by ${engine}${text.length > 5 ? ` · ${text.length.toLocaleString()} chars extracted` : ""}`,
+      });
     }
   }, [attachAiFile]);
 
@@ -285,9 +318,20 @@ export default function AiAssistantView() {
             <div className="flex items-center gap-1.5">
               <button onClick={() => setExportOpen(true)} title="Export conversation" className="rounded-md border p-1.5 hover:bg-muted"><FileDown className="h-3.5 w-3.5" /></button>
               <button onClick={() => setSettingsOpen(true)} title="Settings" className="rounded-md border p-1.5 hover:bg-muted"><Settings2 className="h-3.5 w-3.5" /></button>
+              {/* v21: thread switcher — pick which conversation is live */}
+              {threads.length > 1 && (
+                <select
+                  value={thread?.id ?? ""}
+                  onChange={e => setActiveThread(e.target.value)}
+                  className="max-w-[140px] truncate rounded-md border bg-card px-1.5 py-1 text-[10px] font-semibold"
+                  title="Switch conversation thread"
+                >
+                  {threads.map(t => <option key={t.id} value={t.id}>{t.title.slice(0, 30)}</option>)}
+                </select>
+              )}
               <span className="rounded-full border px-2 py-0.5 text-[9.5px] font-semibold text-muted-foreground">threads: {threads.length}</span>
-              {threads[0] && <button onClick={() => deleteThread(threads[0].id)} title="Delete thread" className="rounded-md border p-1.5 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5 text-rose-500" /></button>}
-              <button onClick={() => createThread()} title="New thread" className="rounded-md border p-1.5 hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
+              {thread && <button onClick={() => { deleteThread(thread.id); setActiveThread(threads.find(t => t.id !== thread.id)?.id ?? ""); }} title="Delete active thread" className="rounded-md border p-1.5 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5 text-rose-500" /></button>}
+              <button onClick={() => { const id = createThread(); setActiveThread(id); }} title="New thread" className="rounded-md border p-1.5 hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
             </div>
           </div>
 
@@ -328,6 +372,15 @@ export default function AiAssistantView() {
               <motion.div key={m.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={cn("flex gap-3", m.role === "user" ? "justify-end" : "")}>
                 {m.role === "assistant" && <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-white"><Sparkles className="h-3.5 w-3.5" /></div>}
                 <div className={cn("max-w-[85%] rounded-xl px-3.5 py-2.5", m.role === "user" ? "bg-[#0c93e7] text-white" : "border bg-muted/25")}>
+                  {m.files && m.files.length > 0 && (
+                    <div className={cn("mb-1.5 flex flex-wrap gap-1.5", m.role === "user" ? "justify-end" : "")}>
+                      {m.files.map(f => (
+                        <span key={f.name} className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium", m.role === "user" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground")}>
+                          <FileText className="h-3 w-3" /> {f.name.slice(0, 24)} · {Math.round(f.size / 1024)} KB
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {m.role === "user" ? <div className="text-[13px] leading-relaxed">{m.content}</div> : m.answer ? <AnswerBody answer={m.answer} /> : <div className="text-[13px]">{m.content}</div>}
                 </div>
               </motion.div>

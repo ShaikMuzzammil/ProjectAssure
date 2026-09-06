@@ -33,7 +33,9 @@ export default function AlertsView() {
   const openProject = useApp(s => s.openProject);
   const navigate = useApp(s => s.navigate);
   const emailSettings = useApp(s => s.emailSettings);
-  const broadcastAlert = useApp(s => (s as { broadcastAlert?: (title: string, message: string, severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW") => void }).broadcastAlert ?? (() => {}));
+  // v21: REAL broadcast — goes through the store (notifications for every
+  // local user + the sync-hub webhook so OTHER browsers and Host Control get it)
+  const broadcastAlert = useApp(s => s.broadcastAlert);
 
   type SevFilter = "ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   const [filter, setFilter] = useState<SevFilter>("ALL");
@@ -350,35 +352,20 @@ export default function AlertsView() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setBroadcastOpen(false)}>Cancel</Button>
             <Button disabled={broadcastTitle.trim().length < 4 || broadcastMsg.trim().length < 10} onClick={() => {
-              // Inject as a synthetic broadcast alert attached to the worst project (or first available)
-              const target = worst ?? projects[0];
-              if (target) {
-                // Use existing acknowledge/simulate pathway — we push a broadcast alert
-                useApp.setState(s => ({
-                  projects: s.projects.map(p => p.id === target.id ? {
-                    ...p,
-                    alerts: [{
-                      id: `ba-${Date.now()}`,
-                      projectId: target.id,
-                      title: broadcastTitle.trim(),
-                      description: broadcastMsg.trim(),
-                      severity: broadcastSev,
-                      type: "MANUAL_BROADCAST",
-                      isRead: false,
-                      createdAt: new Date().toISOString(),
-                      recommendedAction: "Read the broadcast and confirm receipt.",
-                      recommendedOwner: user.name,
-                      recommendedDeadline: "End of day",
-                      pathway: "broadcast",
-                      emailQueued: false,
-                    }, ...p.alerts],
-                  } : p),
-                  liveEvents: [{ id: `ev-${Date.now()}`, kind: "new-alert" as const, at: new Date().toISOString(), projectId: target.id, title: `Broadcast: ${broadcastTitle.trim()}`, detail: broadcastMsg.trim() }, ...s.liveEvents].slice(0, 30),
-                }));
+              // v21: one call — local notifications + sync-hub command queue
+              // (every other connected browser and Host Control receive it live)
+              const res = broadcastAlert({
+                title: broadcastTitle.trim(),
+                message: broadcastMsg.trim(),
+                severity: broadcastSev === "CRITICAL" ? "critical" : broadcastSev === "HIGH" || broadcastSev === "MEDIUM" ? "warning" : "info",
+              });
+              if (!res.ok) {
+                toast.error("Broadcast blocked", { description: res.error });
+                return;
               }
               setBroadcastOpen(false);
               setBroadcastTitle(""); setBroadcastMsg("");
-              toast.success("Broadcast sent", { description: "Notification routed to all users (demo + fresh-user lanes)" });
+              toast.success("Broadcast sent", { description: "Routed to every local user AND queued in the sync hub — connected browsers see it within ~20s, Host Control immediately." });
             }}><Megaphone className="h-4 w-4" />Send broadcast</Button>
           </DialogFooter>
         </DialogContent>

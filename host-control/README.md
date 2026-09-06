@@ -1,104 +1,106 @@
-# ProjectAssure Host Control — the master control plane
+# ProjectAssure Host Control
 
-> **Separate deployment** — this is a standalone Next.js 16 app deployed as a
-> SEPARATE Vercel project from the same GitHub repo. It controls the main
-> ProjectAssure prototype at <https://project-assure.vercel.app>.
->
-> SIH 2026 · SIH26103 · Team NEXGEN · Amrita Vishwa Vidyapeetham Chennai
+> Master control plane for the ProjectAssure platform.
+> SIH 2026 · SIH26103 · Team NEXGEN.
+> The REAL bridge to the main app — nothing hardcoded, nothing faked.
 
----
+## What it is
 
-## What is this?
+- Government control tower for the whole portfolio
+- Mirrors every user, project, alert, event, email and login from the main app
+- Real host actions: approvals, broadcasts, access/role control, automated emails
+- Runs as its own Next.js app on port 3001 (deploy separately on Vercel)
 
-The host-control is the **Chief Programme Officer's cockpit** — a master admin
-plane that sits ABOVE the main ProjectAssure prototype. It aggregates the whole
-portfolio in one view, with approval queues, budget risk panels, alert feeds,
-user management and a universal intelligence console.
-
-It does NOT replace the main prototype — it controls it. Both deploy from the
-same GitHub repo but as two separate Vercel projects that link to each other.
-
----
-
-## Quick start (local)
+## Quick start (dev)
 
 ```bash
 cd host-control
-npm install --legacy-peer-deps
-npm run dev
-# → http://localhost:3001 → mission dashboard loads automatically
+bun install            # or npm install
+cp .env.example .env.local
+bun run dev            # next dev -p 3001
 ```
 
-The host-control runs on port 3001 (the main prototype is on 3000) so you can
-run both side-by-side. By default it shows seed data; set `MAIN_PROJECT_URL` in
-`.env.local` to also probe the live main project's `/api/health`.
+Then:
 
----
+- main app → `http://localhost:3000` (log in — its browser pushes the snapshot)
+- host control → `http://localhost:3001`
+- login → `cpo@mospi.gov.in` / `hostoverseer` (env-configured)
 
-## Deploy to Vercel (SEPARATE project from the same repo)
+No DATABASE_URL needed — state is an in-RAM singleton + `.host-store.json` (auto-saved, gitignored).
 
-1. Push the entire `prototype/` folder (this folder's parent) to a GitHub repo.
-2. Go to [vercel.com/new](https://vercel.com/new) → import the repo.
-3. **IMPORTANT:** under "Root Directory", set it to `host-control` (NOT the repo
-   root). Vercel will then build the host-control app instead of the main app.
-4. Add environment variables:
-   - `GEMINI_API_KEY` — free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-   - `MAIN_PROJECT_URL` — the URL of your deployed main app (e.g. `https://project-assure.vercel.app`)
-5. **Deploy** → host-control live at `https://projectassure-host.vercel.app` (or
-   whatever URL you prefer).
+## How sync works
 
----
+```
+main app (browser, logged in)
+  │  POST /api/sync/push        every 45s + on login + on actions
+  ▼
+main app sync hub (server)
+  │  GET  /api/sync/state       ← host polls every 5s (server-side, no CORS)
+  │  POST /api/sync/webhook     ← host broadcasts + user alerts
+  ▼
+host-control (this app)
+  │  mirror → approvals → automated emails → UI (5s poll)
+  │
+  └  main-app browsers poll /api/sync/commands every 20s
+     → broadcasts land as real notifications + toasts
+```
 
-## 9 admin views
+- All main-app fetches happen SERVER-side (CORS never applies)
+- Unreachable main → last mirror served, marked STALE (amber badge)
+- First sync baselines existing records → only REAL new items become approvals
+- Optional push mode: `POST /api/admin/sync` with `x-sync-token` (SYNC_TOKEN)
 
-| View | What it shows |
-|---|---|
-| **Mission Dashboard** | 4 KPI tiles (Total Projects · Total Sanctioned · Open Alerts · Pending Approvals) + health-band distribution + Top 5 at-risk projects + live activity feed |
-| **Approval Centre** | Every pending change order, budget increase, extension of time and procurement request — approve/reject with audit-logged notes |
-| **Budget Risk** | Org-wide budget utilisation + variance % + projected outturn + Top 5 budget overruns (with variance bars) |
-| **Alerts Aggregation** | Every alert across every project in one feed. Severity-ranked with pathway badges (DEMO / FRESH / BROADCAST). Broadcast button |
-| **User Management** | Every user (demo + registered) with role, source badge, designation, email, project count, last-active stamp |
-| **Intelligence Console** | Universal AI chat grounded on live portfolio data. Multi-provider chain (Gemini → Groq → OpenRouter → built-in) |
-| **Integrations** | Main project URL config + connection test + env var reference table |
-| **Demo Showcase** | Public-facing demo cards linking back to the main prototype |
-| **Audit Trail** | Append-only searchable log of every admin action |
+## Features
 
----
+- Login → real creds + HMAC-signed httpOnly cookie + IP lockout (6 fails / 10 min) + audit
+- Mission Dashboard → KPIs, health bands chart, at-risk list, live feed, sync card
+- User Management → sortable/filterable grid + per-user drawer (profile / security / projects / alerts / activity) + actions
+- User actions → restrict/restore access, role change, direct alert (webhook), direct email — each notifies the user for real
+- Projects Control → full grid, ₹Cr budgets, overrun %, milestones, detail drawer, CSV export
+- Approvals Centre → real derived items (new projects / new accounts / budget breaches) + decisions + owner notifications
+- Alerts & Broadcast → mirrored alert feed + broadcast (all users) + direct user alerts
+- Email Outbox → login / budget / welcome automation, provider chain (SMTP → Brevo → Resend), honest SIMULATED fallback, full log
+- Audit Trail → append-only, searchable, every action
+- Intelligence Console → AI chat grounded on the live mirror (Gemini → Groq → sandbox SDK → built-in engine)
+- Integrations → URL config + test, env checklist, setup guide
 
-## Environment variables
+## Env vars
 
-See `.env.example` for the full template. The TL;DR:
+See `.env.example` (all documented).
 
-| Key | Purpose | Free? |
-|---|---|---|
-| `GEMINI_API_KEY` | Live intelligence (default provider) | ✅ free |
-| `GROQ_API_KEY` | Fallback 1 — fast | ✅ free |
-| `OPENROUTER_API_KEY` | Fallback 2 — community models | ✅ free |
-| `OPENAI_API_KEY` | Fallback 3 — paid | paid |
-| `MAIN_PROJECT_URL` | URL of the main ProjectAssure prototype | — |
+- `MAIN_PROJECT_URL` — main app URL (default `http://localhost:3000`)
+- `SYNC_TOKEN` — optional shared webhook secret
+- `HOST_ADMIN_EMAIL` / `HOST_ADMIN_PASSWORD` — login (change defaults!)
+- `HOST_SESSION_SECRET` — optional cookie-signing secret
+- `GEMINI_API_KEY`, `GROQ_API_KEY` — Intelligence providers
+- `EMAIL_USER` + `EMAIL_PASS` (+ `SMTP_HOST`, `SMTP_PORT`) — SMTP email
+- `BREVO_API_KEY`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` — HTTP email APIs
 
-With **zero env vars** the host-control runs in offline/built-in mode (jury-safe).
+## Deploy to Vercel (separate project)
 
----
+1. Push the repo (host-control folder included) to GitHub
+2. Vercel → Add New Project → import the repo
+3. Root Directory → `host-control`
+4. Framework preset → Next.js (auto)
+5. Env vars → add at least:
+   - `MAIN_PROJECT_URL=https://<your-main-app>.vercel.app`
+   - `HOST_ADMIN_EMAIL`, `HOST_ADMIN_PASSWORD` (strong)
+   - optional: `SYNC_TOKEN`, email keys, AI keys
+6. Deploy → login at `https://<host-control>.vercel.app`
+7. Main app side → set the same `SYNC_TOKEN` if you use one
 
-## Tech stack
+On Vercel:
 
-Next.js 16 (App Router) · TypeScript · Tailwind CSS · Zustand · Prisma ·
-Gemini/Groq/OpenRouter/OpenAI provider chain · Recharts · Lucide icons ·
-Framer Motion · Sonner toasts.
+- `.host-store.json` persistence is skipped (read-only FS) → in-memory per lambda
+- approvals/audit/outbox reset on cold start; the mirror re-fills on first sync
+- for durable state, point Prisma at a database (schema kept minimal on purpose)
 
----
+## Security notes
 
-## How host-control ↔ main prototype connect
-
-1. **Read-only probe** — host-control polls `<MAIN_PROJECT_URL>/api/health` every 5s
-2. **Shared seed** — both projects ship the same demo data so the host-control shows realistic content even when the main project is unreachable
-3. **(Production) Webhook** — configure the main project to POST events to the host-control's `/api/admin/sync` for true real-time updates
-
----
-
-## Team NEXGEN
-
-Harshavardhan (Team Lead) · Shaik Muzzammil (Intelligence) · Kalathuru Varshitha (Prediction Engine) · Keerthana Varapradha NB (Document Intelligence) · Nishitha Penagaluru (UI/UX) · A. Gandhimathi (Quality & Docs)
-
-Amrita Vishwa Vidyapeetham, Chennai Campus · SIH 2026 · SIH26103
+- Change `HOST_ADMIN_PASSWORD` before any real deployment
+- Session = HMAC-SHA256 signed httpOnly cookie, 8h TTL
+- Every `/api/admin/*` route rejects without a valid session (401)
+- 6 failed logins → 10-minute IP lockout (in-memory)
+- `x-sync-token` shared secret protects host ↔ main webhook traffic
+- Login attempts, decisions, broadcasts, emails — all audited
+- No secrets in code; env-only

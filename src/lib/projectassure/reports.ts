@@ -195,6 +195,19 @@ export async function downloadExcel(doc: ReportDoc, fileName: string, extraSheet
 
 // ─── PDF (jsPDF, hand-rolled tables) ────────────────────────────────────────
 export async function downloadPdf(doc: ReportDoc, fileName: string): Promise<void> {
+  const pdf = await pdfBody(doc);
+  pdf.save(fileName);
+}
+
+/** v21: build the PDF and return it as a base64 string — used for REAL email
+ *  attachments (POST /api/email/send now accepts attachments). What you
+ *  preview is exactly what gets attached. */
+export async function buildPdfBase64(doc: ReportDoc): Promise<string> {
+  const pdf = await pdfBody(doc);
+  return pdf.output("datauristring").split(",")[1] ?? "";
+}
+
+async function pdfBody(doc: ReportDoc): Promise<import("jspdf").jsPDF> {
   const { jsPDF } = await import("jspdf");
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const W = 210, H = 297, M = 16;
@@ -315,7 +328,7 @@ export async function downloadPdf(doc: ReportDoc, fileName: string): Promise<voi
     rows.forEach((r, idx) => drawRow(r, false));
   }
 
-  pdf.save(fileName);
+  return pdf;
 }
 
 function triggerDownload(blob: Blob, fileName: string) {

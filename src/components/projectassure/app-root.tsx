@@ -7,6 +7,8 @@ import LandingView from "./landing/landing-view";
 import AboutView from "./about/about-view";
 import LoginView from "./auth/login-view";
 import AppShell from "./shell/app-shell";
+import DemoView from "./auth/demo-view";
+import PublicView from "./public/public-view";
 
 export default function AppRoot() {
   const boot = useApp(s => s.boot);
@@ -14,6 +16,7 @@ export default function AppRoot() {
   const user = useApp(s => s.user);
   const applyNextEvent = useApp(s => s.applyNextEvent);
   const liveEventsEnabled = useApp(s => s.liveEventsEnabled);
+  const syncNow = useApp(s => s.syncNow);
 
   useEffect(() => { boot(); }, [boot]);
 
@@ -24,7 +27,15 @@ export default function AppRoot() {
     return () => clearInterval(t);
   }, [liveEventsEnabled, user, applyNextEvent]);
 
-  // Guard: app pages require auth
+  // v21: periodic sync (every 45s) keeps the Host Control mirror warm while
+  // a session is open, even without user mutations.
+  useEffect(() => {
+    if (!user) return;
+    const t = setInterval(() => void syncNow(true), 45000);
+    return () => clearInterval(t);
+  }, [user, syncNow]);
+
+  // Guard: app pages require auth. #/demo and #/public stay open to everyone.
   const page = route.page === "app" && !user ? "login" : route.page;
 
   return (
@@ -32,6 +43,8 @@ export default function AppRoot() {
       {page === "landing" && <LandingView />}
       {page === "about" && <AboutView />}
       {page === "login" && <LoginView />}
+      {page === "demo" && <DemoView />}
+      {page === "public" && <PublicView />}
       {page === "app" && <AppShell portal={route.portal} />}
     </div>
   );

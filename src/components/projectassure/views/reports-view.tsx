@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { useApp } from "@/store/app-store";
 import { SectionTitle, EmptyState, Md } from "../shared/ui-bits";
 import DocPipeline from "../shared/doc-pipeline";
-import { REPORT_KINDS, buildReport, downloadPdf, downloadExcel, downloadCsv, projectsToRows, reportFileName, REPORT_TOPICS, DEFAULT_TOPICS, filterReport } from "@/lib/projectassure/reports";
+import { REPORT_KINDS, buildReport, downloadPdf, downloadExcel, downloadCsv, projectsToRows, reportFileName, REPORT_TOPICS, DEFAULT_TOPICS, filterReport, buildPdfBase64 } from "@/lib/projectassure/reports";
 import { inr, relTime, bytes as fmtBytes } from "@/lib/projectassure/format";
 import { can } from "@/lib/projectassure/permissions";
 import { toast } from "sonner";
@@ -64,8 +64,21 @@ export default function ReportsView() {
   const emailIt = async () => {
     if (!target) return;
     const fn = reportFileName(kind, kind === "project-status" ? target : undefined);
-    const msg = await queueEmail({ to: user.email, toName: user.name, template: "report_delivery", reportName: `${fn}.pdf`, project: target, projectId: target.id, attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb: 296 }], send: true });
-    toast.success(msg.status === "SENT" ? "Emailed via email service" : "Queued to the demo outbox", { description: `To ${msg.to} · preview in the Email Centre` });
+    // v21: build the REAL PDF and attach it — /api/email/send now delivers
+    // genuine base64 attachments through SMTP/Brevo (not metadata-only).
+    const full = buildReport(kind, projects, stats, user, kind === "project-status" ? target : undefined);
+    const doc = deepDive ? full : filterReport(full, topics);
+    toast.info("Building the PDF…", { description: "The same document you preview is what gets attached." });
+    const base64 = await buildPdfBase64(doc);
+    const sizeKb = Math.max(1, Math.round((base64.length * 3) / 4 / 1024));
+    const msg = await queueEmail({
+      to: user.email, toName: user.name, template: "report_delivery",
+      reportName: `${fn}.pdf`, project: target, projectId: target.id,
+      attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb }],
+      send: true,
+      attachmentBase64: base64,
+    });
+    toast.success(msg.status === "SENT" ? "Emailed with the real PDF attached" : "Queued to the demo outbox (attachment ready)", { description: `To ${msg.to} · ${fn}.pdf (${sizeKb} KB) · preview in the Email Centre` });
     navigate("email-center");
   };
 

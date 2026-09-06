@@ -49,6 +49,18 @@ export async function POST(req: Request) {
   const template = String(payload.template ?? "custom");
   const html = wrapHtml(template, markdownish(body));
 
+  // REAL attachments: [{ filename, contentType, base64 }] (reports, exports, dossiers)
+  const attachments = Array.isArray(payload.attachments)
+    ? (payload.attachments as Array<Record<string, string>>)
+        .filter((a) => a && typeof a.filename === "string" && typeof a.base64 === "string" && a.base64.length > 0)
+        .slice(0, 5)
+        .map((a) => ({
+          filename: a.filename.slice(0, 120),
+          contentType: a.contentType || "application/octet-stream",
+          content: Buffer.from(a.base64, "base64"),
+        }))
+    : [];
+
   const smtpUser = process.env.EMAIL_USER;
   const smtpPass = process.env.EMAIL_PASS;
   const smtpHost = process.env.SMTP_HOST ?? "smtp.gmail.com";
@@ -71,8 +83,8 @@ export async function POST(req: Request) {
       const from = smtpHost.includes("gmail")
         ? `"ProjectAssure Alerts" <${smtpUser}>`
         : `"ProjectAssure Alerts" <${process.env.ALERT_EMAIL_FROM ?? smtpUser}>`;
-      await transport.sendMail({ from, to, subject, html, text: body.replace(/\*\*/g, "") });
-      return NextResponse.json({ sent: true, provider: `smtp:${smtpHost}` });
+      await transport.sendMail({ from, to, subject, html, text: body.replace(/\*\*/g, ""), attachments: attachments.length ? attachments : undefined });
+      return NextResponse.json({ sent: true, provider: `smtp:${smtpHost}`, attachments: attachments.length });
     } catch (err) {
       const msg = (err as Error).message ?? "";
       const hint =
@@ -111,7 +123,7 @@ export async function POST(req: Request) {
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from: `ProjectAssure <${fromResend}>`, to: [to], subject, html }),
       });
-      if (res.ok) return NextResponse.json({ sent: true, provider: "resend" });
+      if (res.ok) return NextResponse.json({ sent: true, provider: "resend", attachments: 0 });
       const detail = await res.text().catch(() => "");
       const hint = res.status === 403
         ? "Resend only delivers to your own account address until you verify a domain — add a domain in the Resend dashboard and set ALERT_EMAIL_FROM."

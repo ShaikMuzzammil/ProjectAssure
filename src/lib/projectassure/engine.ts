@@ -13,7 +13,7 @@ import { ANCHOR } from "./doc-corpus";
 export function storyBias(p: Project): { schedule: number; budget: number; resources: number; milestones: number } {
   const t = STORY_TARGETS[p.id];
   if (!t) return { schedule: 0, budget: 0, resources: 0, milestones: 0 };
-  const f = computeHealth(p, ANCHOR);
+  const f = computeHealth(p, new Date());
   return {
     schedule: clamp(t.schedule - f.schedule, -40, 40),
     budget: clamp(t.budget - f.budget, -40, 40),
@@ -23,7 +23,7 @@ export function storyBias(p: Project): { schedule: number; budget: number; resou
 }
 
 /** Recompute a project's health + prediction from its live data (mutations feed this). */
-export function recomputeProject(p: Project, thresholds: ThresholdSettings, now = ANCHOR): Project {
+export function recomputeProject(p: Project, thresholds: ThresholdSettings, now: Date = new Date()): Project {
   const bias = storyBias(p);
   const f = computeHealth(p, now);
   const schedule = clamp(f.schedule + bias.schedule, 0, 100);

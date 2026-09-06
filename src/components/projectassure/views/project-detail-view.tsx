@@ -6,6 +6,7 @@ import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-
 import { ComposedChart, Line, Area, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid, ReferenceLine, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { useApp } from "@/store/app-store";
 import { HealthRing, HealthBadge, StatusBadge, SectionTitle, MsBadge, ProgressBar, Md, EmptyState, InfoTip, PipelineStrip } from "../shared/ui-bits";
+import { GeoEvidencePanel } from "../shared/geo-evidence";
 import { buildRecommendedActions, projectNoActionImpact, buildRootCauseTree, buildExecutiveSummary, seedKpis, fmtDate } from "@/lib/projectassure/recommendations";
 import { deriveRiskRegister, RISK_CATEGORY_META, type RiskCategory } from "@/lib/projectassure/risks";
 import { ACTION_AREA_META } from "@/lib/projectassure/types";
@@ -31,7 +32,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   ChevronRight, Sparkles, FileText, Mail, RefreshCw, Play, Flag, KanbanSquare, IndianRupee, Users2,
   FolderOpen, ShieldAlert, History, FlaskConical, Pencil, Plus, Trash2, Check, Loader2, TrendingDown,
-  Target, ListChecks, GitBranch, Gauge as GaugeIcon, ClipboardList, Network,
+  Target, ListChecks, GitBranch, Gauge as GaugeIcon, ClipboardList, Network, Camera,
 } from "lucide-react";
 import type { Task, TaskStatus, Milestone } from "@/lib/projectassure/types";
 
@@ -44,6 +45,7 @@ const TABS = [
   { id: "documents", label: "Documents", icon: FileText },
   { id: "actions", label: "Plan of Action", icon: Target },
   { id: "risk", label: "Risk & Intelligence", icon: ShieldAlert },
+  { id: "evidence", label: "Site Evidence", icon: Camera },
   { id: "alerts", label: "Alerts", icon: ShieldAlert },
   { id: "audit", label: "Audit", icon: History },
 ];
@@ -245,6 +247,18 @@ export default function ProjectDetailView() {
         <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {tab === "overview" && <OverviewTab p={p} onTab={setTab} />}
           {tab === "milestones" && <MilestonesTab p={p} editable={canEdit} onStatus={(mid, st) => { const r = setMilestoneStatus(p.id, mid, st); if (!r.ok) toast.error("State machine rejection", { description: r.error }); else toast.success("Milestone updated", { description: "Legal transition applied · health & prediction recomputed" }); }} onAdd={() => setMsDialog(true)} />}
+          {tab === "evidence" && (
+            <div className="rounded-2xl border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-[14px] font-bold">Geo-tagged site evidence</h3>
+                  <p className="text-[11.5px] text-muted-foreground">Photos locked with GPS coordinates and timestamps to prove real work is happening on the ground.</p>
+                </div>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-[10.5px] font-semibold">{(p.evidence ?? []).filter(e => e.verdict === "VERIFIED").length}/{(p.evidence ?? []).length} verified</span>
+              </div>
+              <GeoEvidencePanel p={p} canReview={canEdit || user.role === "ADMIN"} />
+            </div>
+          )}
           {tab === "tasks" && <TasksTab p={p} editable={canEdit} onMove={(tid, st) => moveTask(p.id, tid, st)} />}
           {tab === "budget" && <BudgetTab p={p} forecast={forecast!} editable={canEdit} />}
           {tab === "resources" && <ResourcesTab p={p} editable={canEdit} onUpdate={(rid, u) => updateResource(p.id, rid, u)} />}

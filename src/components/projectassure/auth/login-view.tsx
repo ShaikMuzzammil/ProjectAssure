@@ -37,67 +37,71 @@ export default function LoginView() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#0c93e7] dark:bg-[#0a5f97]">
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-br from-slate-100 via-white to-sky-100/70 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
       {/* v8: universal official portal band on the login surface too */}
       <GovHeader surface="public" className="relative z-10" />
       <div className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-8">
-      {/* blueprint grid over solid ministry blue */}
-      <div className="absolute inset-0 opacity-60"
-        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
-      <div className="absolute inset-0"
-        style={{ background: "radial-gradient(900px 500px at 15% 0%, rgba(255,255,255,0.10), transparent 55%), radial-gradient(700px 500px at 100% 100%, rgba(7,43,73,0.45), transparent 60%)" }} />
+      {/* v21 redesign: calm light canvas + deep-navy feature panel — the old
+          full-bleed bright blue drowned the page; now navy carries the weight
+          as one elegant rounded card with warm amber accents. */}
+      <div className="relative mx-auto grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[1.12fr_0.88fr] lg:gap-10">
+        {/* ─── LEFT — navy feature panel: brand, pitch, demo personas ─── */}
+        <div className="relative hidden flex-col overflow-hidden rounded-3xl bg-gradient-to-br from-[#08243d] via-[#0a3252] to-[#072b49] p-8 text-white shadow-2xl shadow-[#072b49]/30 ring-1 ring-white/10 lg:flex">
+          {/* soft glow accents (teal + amber — not more blue) */}
+          <div className="pointer-events-none absolute inset-0 rounded-3xl" style={{ background: "radial-gradient(520px 300px at 85% -10%, rgba(56,189,248,0.18), transparent 60%), radial-gradient(420px 260px at -10% 110%, rgba(251,191,36,0.10), transparent 55%)" }} />
+          <div className="pointer-events-none absolute inset-0 rounded-3xl opacity-[0.35]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)", backgroundSize: "34px 34px" }} />
 
-      <div className="relative mx-auto grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-12">
-        {/* ─── LEFT — brand, one-line pitch, demo personas (one per role) ─── */}
-        <div className="hidden flex-col text-white lg:flex">
-          <button onClick={() => goPage("landing")} className="mb-6 flex items-center gap-1.5 text-[12px] font-medium text-white/60 transition hover:text-white">
+          <button onClick={() => goPage("landing")} className="relative z-10 mb-5 flex items-center gap-1.5 text-[12px] font-medium text-white/55 transition hover:text-white">
             <ArrowLeft className="h-3.5 w-3.5" /> Back to landing
           </button>
 
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-              <ShieldAlert className="h-6.5 w-6.5" />
+          <div className="relative z-10 flex items-center gap-3.5">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15 backdrop-blur">
+              <ShieldAlert className="h-6.5 w-6.5 text-sky-200" />
             </div>
             <div>
               <div className="text-[24px] font-extrabold leading-tight tracking-tight">ProjectAssure</div>
-              <div className="text-[11.5px] font-medium text-white/60">Secure portal access · Smart India Hackathon 2026</div>
+              <div className="text-[11.5px] font-medium text-white/55">Secure portal access · Smart India Hackathon 2026</div>
             </div>
           </div>
 
-          <h1 className="mt-7 max-w-lg text-[27px] font-bold leading-snug">One dashboard for India&apos;s projects.</h1>
-          <p className="mt-2 max-w-lg text-[13px] leading-relaxed text-white/75">
-            Predicts delays <strong className="font-semibold text-white">30–60 days early</strong>, reads field reports itself, and
-            recommends the next best action — on free-tier infrastructure at <strong className="font-semibold text-white">₹0 running cost</strong>.
+          <h1 className="relative z-10 mt-7 max-w-lg text-[27px] font-bold leading-snug">One dashboard for India&apos;s projects.</h1>
+          <p className="relative z-10 mt-2 max-w-lg text-[13px] leading-relaxed text-white/70">
+            Predicts delays <strong className="font-semibold text-amber-200">30–60 days early</strong>, reads field reports itself, and
+            recommends the next best action — on free-tier infrastructure at <strong className="font-semibold text-amber-200">₹0 running cost</strong>.
           </p>
 
           {/* personas — exactly one demo per role type */}
-          <div className="mt-7">
-            <div className="mb-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white/50">Choose a demo persona — 4 roles</div>
+          <div className="relative z-10 mt-7">
+            <div className="mb-2.5 flex items-center justify-between">
+              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Choose a demo persona — 4 roles</div>
+              <button onClick={() => goPage("demo")} className="text-[10px] font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 hover:text-sky-200">full demo page →</button>
+            </div>
             <div className="grid grid-cols-2 gap-2.5">
               {USERS.map(u => {
                 const Icon = ROLE_ICON[u.role] ?? ClipboardList;
                 const active = persona.id === u.id;
                 return (
                   <button key={u.id} type="button" onClick={() => pick(u)}
-                    className={cn("rounded-xl border p-3 text-left backdrop-blur transition",
-                      active ? "border-white/40 bg-white/20 shadow-lg" : "border-white/15 bg-white/8 hover:bg-white/15")}>
+                    className={cn("rounded-xl border p-3 text-left transition",
+                      active ? "border-amber-300/60 bg-white/15 shadow-lg shadow-black/20 ring-1 ring-amber-200/20" : "border-white/10 bg-white/[0.06] hover:border-white/20 hover:bg-white/10")}>
                     <div className="flex items-center gap-2">
-                      <Icon className="h-4 w-4 shrink-0 text-white/85" />
-                      {active && <Check className="ml-auto h-3.5 w-3.5 text-white" />}
+                      <Icon className={cn("h-4 w-4 shrink-0", active ? "text-amber-200" : "text-sky-200/80")} />
+                      {active && <Check className="ml-auto h-3.5 w-3.5 text-amber-200" />}
                     </div>
-                    <div className="mt-1.5 truncate text-[12px] font-bold leading-tight">{u.persona}</div>
-                    <div className="truncate text-[10px] text-white/60">{u.designation}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-wider text-white/45">{u.role.replace("_", " ")}</div>
+                    <div className="mt-1.5 truncate text-[12px] font-bold leading-tight text-white">{u.persona}</div>
+                    <div className="truncate text-[10px] text-white/50">{u.designation}</div>
+                    <div className="mt-1 font-mono text-[9px] uppercase tracking-wider text-white/35">{u.role.replace("_", " ")}</div>
                   </button>
                 );
               })}
             </div>
-            <div className="mt-2 text-[10.5px] text-white/55">
+            <div className="mt-2 text-[10.5px] text-white/45">
               Pick a role to prefill the sign-in card — every persona sees a different, correctly-scoped workspace.
             </div>
           </div>
 
-          <div className="mt-auto pt-8 text-[10px] text-white/45">
+          <div className="relative z-10 mt-auto pt-6 text-[10px] text-white/35">
             Smart India Hackathon 2026 · SIH26103 · Team NEXGEN · Amrita Vishwa Vidyapeetham Chennai
           </div>
         </div>
@@ -108,15 +112,15 @@ export default function LoginView() {
           <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
             {USERS.map(u => (
               <button key={u.id} type="button" onClick={() => pick(u)}
-                className={cn("shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold backdrop-blur",
-                  persona.id === u.id ? "border-white/50 bg-white/25 text-white" : "border-white/20 bg-white/10 text-white/80")}>
+                className={cn("shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition",
+                  persona.id === u.id ? "border-[#0a3252] bg-[#0a3252] text-white" : "border-slate-300 bg-white text-slate-600")}>
                 {u.persona}
               </button>
             ))}
           </div>
 
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-            className="rounded-2xl bg-card p-7 shadow-2xl shadow-[#072b49]/40">
+            className="rounded-2xl border border-slate-200/80 bg-card p-7 shadow-2xl shadow-slate-300/50 dark:border-slate-800 dark:shadow-black/40">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0c93e7]">Smart India Hackathon 2026 · SIH26103</div>
             <h2 className="text-[19px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : "Create your account"}</h2>
             <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
@@ -137,7 +141,7 @@ export default function LoginView() {
             </AnimatePresence>
           </motion.div>
 
-          <div className="mt-3 text-center text-[10px] text-white/55 lg:hidden">
+          <div className="mt-3 text-center text-[10px] text-slate-500 lg:hidden">
             SIH 2026 · SIH26103 · Team NEXGEN
           </div>
         </div>

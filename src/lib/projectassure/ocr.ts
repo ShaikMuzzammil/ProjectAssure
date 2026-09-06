@@ -42,13 +42,30 @@ export function fileKind(name: string): DocumentItem["fileType"] {
   return "txt";
 }
 
-/** Real text extraction for txt/csv; staged simulation otherwise. */
-export async function extractRawText(file: File): Promise<{ text: string; simulated: boolean }> {
+/** REAL text extraction (v21):
+ *  - txt / csv   → read directly
+ *  - xlsx / pdf / images → server-side reader at /api/ai/files
+ *    (SheetJS cells for sheets, document-vision for PDFs & photos)
+ *  - offline fallback → the staged simulation (badged honestly)
+ */
+export async function extractRawText(file: File): Promise<{ text: string; simulated: boolean; engine?: string }> {
   const kind = fileKind(file.name);
   if (kind === "txt" || kind === "csv") {
     const text = await file.text();
-    return { text: text.slice(0, 20000), simulated: false };
+    return { text: text.slice(0, 20000), simulated: false, engine: "text-reader" };
   }
+  // v21: ask the server to read the REAL content
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/ai/files", { method: "POST", body: form });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text && data.text.length > 20) {
+        return { text: String(data.text).slice(0, 40000), simulated: false, engine: String(data.engine ?? "server-reader") };
+      }
+    }
+  } catch { /* offline → simulation below */ }
   // Simulated extraction volume proportional to file size (deterministic-ish).
   // The synthesised report body is a REALISTIC monthly progress report —
   // a mix of achievements and problems, exactly like field papers, so the
@@ -62,7 +79,7 @@ export async function extractRawText(file: File): Promise<{ text: string; simula
 5. Resources. Labour shortage of skilled operators is reported at 18 percent; one crane is idle due to site access restrictions near the village approach road, and local community objection on the haulage route is being addressed through the grievance cell.
 6. Quality and safety. One quality non-conformance was raised for substandard curing and rework is in progress; a minor safety incident (injury to a worker, treated on site) was logged and a toolbox re-briefing conducted.
 7. Risks. Monsoon window exposure for open-cut works; forest clearance for the northern reach is awaited; statutory compliance filing for the quarter is due.`;
-  return { text: body, simulated: true };
+  return { text: body, simulated: true, engine: "simulated-fallback" };
 }
 
 /** GenAI-structuring surrogate: deterministic field extraction + validation. */

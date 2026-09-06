@@ -9,14 +9,14 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   User, Project, ViewId, PortalId, Notification, EmailMessage, AuditLogEntry, ChatThread, ChatMessage,
   ThresholdSettings, AlertRuleSetting, DataMode, LiveEvent, Alert, Milestone, Task, BudgetRecord,
-  ResourceAllocation, DocumentItem, EmailTemplateId, AuditAction, UserRole, EmailSettings, Intervention,
+  ResourceAllocation, DocumentItem, EmailTemplateId, AuditAction, UserRole, EmailSettings, Intervention, SiteEvidence,
 } from "@/lib/projectassure/types";
 import { DEFAULT_THRESHOLDS, INTERVENTION_FLOW } from "@/lib/projectassure/types";
 import { buildWorld, USERS, DEPARTMENTS } from "@/lib/projectassure/seed";
 import { recomputeProject, computePortfolioStats, scopedProjects, evaluateAlertRules } from "@/lib/projectassure/engine";
 import { computeDelayPrediction, simulateRetrain, MODEL_REGISTRY } from "@/lib/projectassure/ml";
 import { buildIndex, type VectorIndex } from "@/lib/projectassure/rag";
-import { nextPortfolioEvent } from "@/lib/projectassure/events";
+import { nextPortfolioEvent, runDeadlineWatchdog } from "@/lib/projectassure/events";
 import { composeEmail, sendEmail } from "@/lib/projectassure/email";
 import { answerQuestion, buildProjectActionPlan, buildProjectDossier } from "@/lib/projectassure/agent";
 import { hashPassword, verifyPassword, passwordIssues } from "@/lib/projectassure/auth-crypto";
@@ -24,10 +24,14 @@ import { uid, clamp } from "@/lib/projectassure/format";
 import { geocodeProject } from "@/lib/projectassure/geo";
 import { seedKpis, buildRecommendedActions } from "@/lib/projectassure/recommendations";
 import { deriveRiskRegister, riskAlertsFromRegister, riskAssessmentFromRegister, buildInitialBudgetRecords, buildInitialResources, starterAlerts } from "@/lib/projectassure/risks";
+import { trainModel, predictWithModel, factorsFromModel, estimatedDaysFromFeatures, type TrainedModel, type TrainOptions } from "@/lib/projectassure/ml-lab";
+import { buildSyncSnapshot, scheduleSync, pushSyncNow, pollCommands, startCommandPolling, stopCommandPolling } from "@/lib/sync/client";
+import type { SyncCommand } from "@/lib/sync/types";
+import { toast } from "sonner";
 
-const STORE_VERSION = 10;
+const STORE_VERSION = 11;
 
-export interface Route { page: "landing" | "about" | "login" | "app"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; }
+export interface Route { page: "landing" | "about" | "login" | "app" | "demo" | "public"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; }
 
 export interface ProjectForm {
   name: string; description: string; sector: string; scheme: string; state: string; district: string;
@@ -90,6 +94,20 @@ interface AppState {
   aiAttachedFiles: { name: string; type: string; size: number; text: string }[];  // v13: uploaded file context
   aiStatus: { connected: boolean; label: string; tier: string } | null;  // v11: live-service probe result
   refreshAiStatus: () => Promise<void>;                                  // v11: probe /api/ai/status (cached server-side)
+  aiActiveThreadId: string | null;                                       // v21: the thread the answer is written to (fixed: was hardcoded to threads[0])
+  setActiveThread: (id: string) => void;
+  // v21: sync hub — the main app mirrors its live state to the server so the
+  // Host Control platform can see users, projects, logins and alerts in real time
+  lastSyncAt: string | null;
+  syncNow: (immediate?: boolean) => Promise<boolean>;
+  hostCommands: { id: string; title: string; from: string; at: string }[];
+  broadcastAlert: (opts: { title: string; message: string; severity: "info" | "warning" | "critical" }) => { ok: boolean; error?: string };
+  // v21: ML Lab — real trained models, persisted, selectable champion
+  mlModels: TrainedModel[];
+  mlChampionId: string | null;
+  trainMlModel: (opts: TrainOptions) => TrainedModel | { error: string };
+  promoteMlModel: (id: string) => void;
+  deleteMlModel: (id: string) => void;
   // v13: AI centre setters
   setAiUniversalMode: (v: boolean) => void;
   attachAiFile: (f: { name: string; type: string; size: number; text: string }) => void;
@@ -124,6 +142,8 @@ interface AppState {
   addResource: (projectId: string, r: Omit<ResourceAllocation, "id" | "projectId">) => void;
   updateResource: (projectId: string, resourceId: string, utilised: number) => void;
   ingestDocument: (projectId: string, doc: DocumentItem) => void;
+  submitEvidence: (input: Omit<SiteEvidence, "id" | "submittedAt" | "reviewStatus" | "submittedBy">) => SiteEvidence | null;
+  reviewEvidence: (projectId: string, evidenceId: string, accept: boolean, note?: string) => { ok: boolean; error?: string };
   deleteDocument: (projectId: string, docId: string) => void;
 
   // ─── alerts / notifications / email ───
@@ -134,7 +154,7 @@ interface AppState {
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
   pushNotification: (n: Omit<Notification, "id" | "createdAt" | "isRead">) => void;
-  queueEmail: (opts: { to: string; toName?: string; template: EmailTemplateId; subject?: string; body?: string; attachments?: EmailMessage["attachments"]; projectId?: string; project?: Project; reportName?: string; docName?: string; send?: boolean }) => Promise<EmailMessage>;
+  queueEmail: (opts: { to: string; toName?: string; template: EmailTemplateId; subject?: string; body?: string; attachments?: EmailMessage["attachments"]; attachmentBase64?: string; projectId?: string; project?: Project; reportName?: string; docName?: string; send?: boolean }) => Promise<EmailMessage>;
   updateEmailSettings: (patch: Partial<EmailSettings>) => void;
 
   // ─── settings ───
@@ -183,6 +203,8 @@ function hashToRoute(): Route {
   if (parts.length === 0) return { page: "landing", view: "dashboard", portal: "main" };
   if (parts[0] === "about") return { page: "about", view: "dashboard", portal: "main" };
   if (parts[0] === "login") return { page: "login", view: "dashboard", portal: "main" };
+  if (parts[0] === "demo") return { page: "demo", view: "dashboard", portal: "main" };
+  if (parts[0] === "public") return { page: "public", view: "dashboard", portal: "main" };
   if (parts[0] === "portal") {
     const portal = (parts[1] as PortalId) ?? "main";
     const view: ViewId = portal === "analytics" ? "analytics" : "ai-assistant";
@@ -254,6 +276,12 @@ export const useApp = create<AppState>()(
       exportHistory: [],
       eventTick: 0,
       aiStatus: null,
+      aiActiveThreadId: null,
+      setActiveThread: (id) => set({ aiActiveThreadId: id }),
+      lastSyncAt: null,
+      hostCommands: [],
+      mlModels: [],
+      mlChampionId: null,
       // v13: AI centre setters
       setAiUniversalMode: (v) => set({ aiUniversalMode: v }),
       attachAiFile: (f) => set(s => ({ aiAttachedFiles: cap([...s.aiAttachedFiles.filter(x => x.name !== f.name), f], 5) })),
@@ -283,6 +311,13 @@ export const useApp = create<AppState>()(
         }
         // v11: probe the live intelligence service once per session
         void get().refreshAiStatus();
+        // v21: mirror state to the Sync Hub (Host Control reads it) and start
+        // listening for Host broadcasts — a real bidirectional bridge.
+        void get().syncNow(true);
+        startCommandPolling(
+          () => get().user?.id ?? null,
+          (cmds) => applyHostCommands(set, get, cmds)
+        );
       },
 
       parseHash: () => set({ route: hashToRoute(), paletteOpen: false }),
@@ -330,8 +365,12 @@ export const useApp = create<AppState>()(
         }
         const stamp = new Date().toISOString();
         set({ user: { ...u, lastLoginAt: stamp } });
-        get().audit("LOGIN", "Session", `${u.source === "registered" ? "Account login (PBKDF2 verified)" : "SSO session established"} for ${u.email} (${u.role}) · JWT HS256 · 24h · 3-domain handoff token issued`, { entityId: u.id });
+        set(s => ({ users: s.users.map(x => x.id === u.id ? { ...x, lastLoginAt: stamp } : x) }));
+        get().audit("LOGIN", "Session", `${u.source === "registered" ? "Account login (PBKDF2-SHA256 verified, 100k iterations)" : "Demo persona session"} for ${u.email} (${u.role}) · login event pushed to Host Control sync hub`, { entityId: u.id });
+        // v21: account-security notification for THIS user only (was leaking to everyone before)
+        get().pushNotification({ userId: u.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")} (${u.source === "registered" ? "password verified" : "demo persona"}). If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
         get().goPage("app");
+        void get().syncNow(true);
         return { ok: true, user: { ...u, lastLoginAt: stamp } };
       },
 
@@ -381,13 +420,20 @@ export const useApp = create<AppState>()(
         set({ user: { ...u, lastLoginAt: stamp } });
         get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt)" : "stored locally (demo mode)"} · auto-login`, { entityId: u.id });
         get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. Create your first project to activate ML monitoring, upload documents and export reports.`, type: "SYSTEM", linkView: "projects" });
+        // v21: new user → notify every ADMIN (they govern access) + sync to hub
+        get().users.filter(x => x.role === "ADMIN" && x.id !== u.id).forEach(admin => {
+          get().pushNotification({ userId: admin.id, title: "👤 New account awaiting your watch", message: `${name} (${email}) registered as ${u.role.replace("_", " ").toLowerCase()} — visible in Host Control now.`, type: "SYSTEM", linkView: "admin" });
+        });
         get().goPage("app");
+        void get().syncNow(true);
         return { ok: true, user: { ...u, lastLoginAt: stamp }, mirrored };
       },
 
       logout: () => {
         if (get().user) get().audit("LOGOUT", "Session", "Session terminated by user");
-        set({ user: null });
+        set({ user: null, aiActiveThreadId: null });
+        stopCommandPolling();
+        void get().syncNow(true);
         get().goPage("landing");
       },
 
@@ -648,6 +694,55 @@ export const useApp = create<AppState>()(
         }
       },
 
+      // v21: geo-tagged photo evidence — REAL EXIF GPS + haversine verdict
+      submitEvidence: (input) => {
+        const p = get().projects.find(x => x.id === input.projectId);
+        if (!p) return null;
+        const ev: SiteEvidence = {
+          ...input,
+          id: uid("ev"),
+          submittedBy: get().user?.name ?? "field officer",
+          submittedAt: new Date().toISOString(),
+          reviewStatus: "pending",
+        };
+        set(s => ({
+          projects: s.projects.map(pp => pp.id !== p.id ? pp : {
+            ...pp,
+            evidence: [ev, ...(pp.evidence ?? [])].slice(0, 24),
+          }),
+        }));
+        get().audit("EVIDENCE_SUBMIT", "SiteEvidence", `Geo-tagged photo “${ev.fileName}” submitted for ${p.psId}${ev.milestoneName ? ` · milestone “${ev.milestoneName}”` : ""} — verdict ${ev.verdict}${ev.distanceKm !== undefined ? ` (${ev.distanceKm} km from site)` : ""}`, { entityId: ev.id });
+        // notify owners: verified evidence is progress proof
+        if (ev.verdict === "VERIFIED" || ev.verdict === "NEAR_SITE") {
+          get().pushNotification({ userId: p.ownerId ?? "all", title: `📸 Site evidence ${ev.verdict === "VERIFIED" ? "verified" : "flagged near-site"} — ${p.psId}`, message: `${ev.fileName} · GPS ${ev.distanceKm ?? "?"} km from site · ${ev.verdict === "VERIFIED" ? "auto-acceptable" : "needs manual review"}.`, type: "SYSTEM", linkView: "project-detail", linkProjectId: p.id });
+        } else {
+          get().pushNotification({ userId: p.ownerId ?? "all", title: `⚠️ Evidence rejected by GPS check — ${p.psId}`, message: `${ev.fileName}: ${ev.reason}`, type: "ALERT", linkView: "project-detail", linkProjectId: p.id });
+        }
+        void get().syncNow();
+        return ev;
+      },
+
+      reviewEvidence: (projectId, evidenceId, accept, note) => {
+        const p = get().projects.find(x => x.id === projectId);
+        const ev = p?.evidence?.find(e => e.id === evidenceId);
+        if (!p || !ev) return { ok: false, error: "not_found" };
+        set(s => ({
+          projects: s.projects.map(pp => pp.id !== projectId ? pp : {
+            ...pp,
+            evidence: (pp.evidence ?? []).map(e => e.id !== evidenceId ? e : {
+              ...e,
+              reviewStatus: accept ? "accepted" : "rejected",
+              reviewedBy: get().user?.name ?? "officer",
+              reviewedAt: new Date().toISOString(),
+              reviewNote: note,
+            }),
+          }),
+        }));
+        get().audit("EVIDENCE_REVIEW", "SiteEvidence", `Evidence “${ev.fileName}” on ${p.psId} ${accept ? "ACCEPTED" : "REJECTED"}${note ? ` · note: ${note}` : ""} by ${get().user?.name}`, { entityId: evidenceId });
+        void get().syncNow();
+        return { ok: true };
+      },
+
       deleteDocument: (projectId, docId) => {
         const doc = get().projects.find(p => p.id === projectId)?.documents.find(d => d.id === docId);
         set(s => {
@@ -746,7 +841,7 @@ export const useApp = create<AppState>()(
       createThread: () => {
         const u = get().user;
         const t: ChatThread = { id: uid("th"), title: "New conversation", userId: u?.id ?? "anon", messages: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-        set(s => ({ chatThreads: cap([t, ...s.chatThreads], 6) }));
+        set(s => ({ chatThreads: cap([t, ...s.chatThreads], 6), aiActiveThreadId: t.id }));
         return t.id;
       },
 
@@ -774,6 +869,92 @@ export const useApp = create<AppState>()(
         }
       },
 
+      // v21: ─── Sync Hub actions ─────────────────────────────────────────
+      syncNow: async (immediate) => {
+        const s = get();
+        if (!immediate) { scheduleSync(() => ({ buildArgs: () => buildSyncSnapshot({ projects: get().projects, users: get().users, notifications: get().notifications, emails: get().emails, audit: get().globalAudit, liveEvents: get().liveEvents }) })); return true; }
+        const snapshot = buildSyncSnapshot({ projects: s.projects, users: s.users, notifications: s.notifications, emails: s.emails, audit: s.globalAudit, liveEvents: s.liveEvents });
+        const ok = await pushSyncNow(snapshot);
+        if (ok) set({ lastSyncAt: new Date().toISOString() });
+        return ok;
+      },
+
+      broadcastAlert: ({ title, message, severity }) => {
+        const u = get().user;
+        if (!u || u.role !== "ADMIN") return { ok: false, error: "Only administrators can broadcast." };
+        const at = new Date().toISOString();
+        // 1) every user in THIS browser instance gets the notification
+        get().pushNotification({ userId: "all", title: `📢 ${title}`, message, type: severity === "critical" ? "ALERT" : "SYSTEM", linkView: "alerts" });
+        // 2) push to the Sync Hub so Host Control and every other connected
+        //    browser receives it via the command poll (real cross-client path)
+        void fetch("/api/sync/webhook", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "broadcast", title, message, severity, createdBy: u.name, audience: "all" }),
+        }).catch(() => { /* offline ok */ });
+        get().audit("ALERT_BROADCAST", "Alert", `Broadcast “${title}” (${severity}) sent to all users — queued in sync hub for every connected client`, { entityId: u.id });
+        return { ok: true };
+      },
+
+      // v21: ─── ML Lab actions ─────────────────────────────────────────────
+      trainMlModel: (opts) => {
+        const projects = get().projects.filter(p => p.status !== "CANCELLED");
+        if (projects.length < 6) return { error: "Need at least 6 non-cancelled projects with milestones to train (build the demo world or create projects first)." };
+        try {
+          const model = trainModel(projects, opts);
+          set(s => ({ mlModels: [model, ...s.mlModels].slice(0, 10) }));
+          get().audit("MODEL_TRAIN", "MlModel", `${model.name} trained on ${model.trainedOn} rows (${model.realRows} real) — held-out AUC ${model.metricsTest.auc} · accuracy ${model.metricsTest.accuracy} · F1 ${model.metricsTest.f1} · test size ${model.testSize} real projects`, { entityId: model.id });
+          return model;
+        } catch (err) {
+          return { error: `Training failed: ${String(err)}` };
+        }
+      },
+
+      promoteMlModel: (id) => {
+        const m = get().mlModels.find(x => x.id === id);
+        if (!m) return;
+        set({ mlChampionId: id });
+        // re-score every prediction with the new champion
+        set(s => ({
+          projects: s.projects.map(p => {
+            if (p.status === "CANCELLED" || !p.milestones.length) return p;
+            const prob = predictWithModel(m, p);
+            const days = estimatedDaysFromFeatures(p, prob);
+            const ciBand = Math.max(7, Math.round(days * 0.32 + 6));
+            return {
+              ...p,
+              prediction: {
+                ...(p.prediction ?? { id: p.id + "-pred", projectId: p.id, predictionType: "delay" as const, computedAt: new Date().toISOString(), featureSnapshot: {} }),
+                probability: prob,
+                estimatedDays: days,
+                ciLower: Math.max(0, days - ciBand),
+                ciUpper: days + ciBand,
+                confidence: clamp(0.62 + m.metricsTest.auc * 0.3, 0.6, 0.97),
+                factors: factorsFromModel(m, p),
+                modelVersion: `${m.name.split(" ·")[0]} (${m.algorithm})`,
+                computedAt: new Date().toISOString(),
+              },
+            };
+          }),
+        }));
+        get().audit("MODEL_PROMOTE", "MlModel", `${m.name} promoted to champion — all live delay predictions re-scored with the trained model (held-out AUC ${m.metricsTest.auc})`, { entityId: id });
+        get().pushNotification({ userId: "all", title: "🧠 New champion model live", message: `${m.name} now powers every delay prediction. Held-out AUC ${m.metricsTest.auc} · accuracy ${m.metricsTest.accuracy} on ${m.testSize} real projects.`, type: "SYSTEM", linkView: "model-lab" });
+        void get().syncNow();
+      },
+
+      deleteMlModel: (id) => {
+        const m = get().mlModels.find(x => x.id === id);
+        if (!m) return;
+        if (get().mlChampionId === id) {
+          // demote first: fall back to the built-in engine
+          set(s => ({
+            mlChampionId: null,
+            projects: s.projects.map(p => (p.prediction && p.prediction.modelVersion.includes(m.name.split(" ·")[0]) ? { ...p, prediction: computeDelayPrediction(p) } : p)),
+          }));
+        }
+        set(s => ({ mlModels: s.mlModels.filter(x => x.id !== id) }));
+        get().audit("MODEL_RETIRE", "MlModel", `${m.name} removed from the registry`, { entityId: id });
+      },
+
       // v11: probe the live intelligence service once per session (server caches
       // for 90s). If it is connected and the user never chose a mode, live mode
       // turns itself on — the assistant is at its best out of the box, on any
@@ -795,9 +976,12 @@ export const useApp = create<AppState>()(
       },
 
       ask: async (question) => {
-        let threadId = get().chatThreads[0]?.id;
+        // v21 FIX: answers used to always land in threads[0] — the active thread
+        // is now tracked explicitly so every conversation stays intact.
+        let threadId = get().aiActiveThreadId ?? get().chatThreads[get().chatThreads.length - 1]?.id ?? get().chatThreads[0]?.id;
         if (!threadId) threadId = get().createThread();
-        const userMsg: ChatMessage = { id: uid("msg"), role: "user", content: question, createdAt: new Date().toISOString() };
+        set({ aiActiveThreadId: threadId });
+        const userMsg: ChatMessage = { id: uid("msg"), role: "user", content: question, createdAt: new Date().toISOString(), files: get().aiAttachedFiles.map(f => ({ name: f.name, size: f.size })) };
         set(s => ({ chatThreads: s.chatThreads.map(t => t.id === threadId ? { ...t, title: t.messages.length === 0 ? question.slice(0, 48) : t.title, messages: cap([...t.messages, userMsg], 30), updatedAt: new Date().toISOString() } : t) }));
 
         let answer;
@@ -937,6 +1121,40 @@ export const useApp = create<AppState>()(
         const outcome = nextPortfolioEvent(s.projects, s.user, s.thresholds, tick);
         set({ eventTick: tick, liveEvents: cap([outcome.event, ...s.liveEvents], 30) });
         if (outcome.notifications.length) set(st => ({ notifications: cap([...outcome.notifications, ...st.notifications], 60) }));
+
+        // v21: AUTOMATED deadline watchdog — every 4th tick (once a minute) it
+        // scans for milestones past their planned date with no completion, marks
+        // them DELAYED for real, fires alerts and queues the authority email.
+        if (tick % 4 === 0) {
+          const wd = runDeadlineWatchdog(get().projects);
+          if (wd.triggered > 0) {
+            set(st => ({
+              projects: st.projects.map(p => {
+                const patch = wd.patches.find(x => x.projectId === p.id);
+                if (!patch) return p;
+                return {
+                  ...p,
+                  milestones: p.milestones.map(m => patch.milestoneIds.includes(m.id) ? { ...m, status: "DELAYED" as const } : m),
+                  alerts: [...wd.alerts.filter(a => a.projectId === p.id), ...p.alerts],
+                };
+              }),
+              notifications: cap([...wd.notifications, ...st.notifications], 60),
+              liveEvents: cap([{
+                id: uid("ev"), kind: "new-alert", at: new Date().toISOString(),
+                title: `Deadline watchdog — ${wd.triggered} overdue milestone${wd.triggered > 1 ? "s" : ""} flagged`,
+                detail: `Automated scan marked overdue milestones DELAYED, raised ${wd.alerts.filter(a => a.emailQueued).length} authority email(s) and notified owners.`,
+              }, ...st.liveEvents], 30),
+            }));
+            get().audit("DEADLINE_WATCHDOG", "Milestone", `Automated watchdog flagged ${wd.triggered} overdue milestone(s) across ${wd.patches.length} project(s) — marked DELAYED, alerts raised, authority emails queued`);
+            // queue the authority email for critical overdue items
+            const critical = wd.alerts.filter(a => a.emailQueued);
+            for (const a of critical.slice(0, 2)) {
+              const p = get().projects.find(x => x.id === a.projectId);
+              if (p) void get().queueEmail({ to: get().emailSettings.criticalTo[0] ?? "watchdog@mospi.gov.in", toName: "Milestone Watchdog", template: "high_alert", project: p, projectId: p.id, send: true });
+            }
+            void get().syncNow();
+          }
+        }
         if (outcome.projectPatch) {
           const { projectId, patch } = outcome.projectPatch;
           // v3 fix: recompute through the engine so healthStatus band stays in
@@ -998,6 +1216,8 @@ export const useApp = create<AppState>()(
         modelVersions: s.modelVersions, dataMode: s.dataMode, liveEventsEnabled: s.liveEventsEnabled,
         density: s.density, exportHistory: s.exportHistory, eventTick: s.eventTick, booted: s.booted, tourSeen: s.tourSeen,
         aiUniversalMode: s.aiUniversalMode,  // v13: persists universal mode across reloads
+        mlModels: s.mlModels, mlChampionId: s.mlChampionId,   // v21: trained models survive reloads
+        aiAttachedFiles: s.aiAttachedFiles.slice(0, 3),       // v21: last files persist (text only, capped)
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.vectorIndex = buildIndex(state.projects ?? []);
@@ -1005,6 +1225,33 @@ export const useApp = create<AppState>()(
     },
   ),
 );
+
+// v21 helper: Host Control broadcasts arrive through the command poll and
+// become real notifications + toasts for the addressed audience.
+function applyHostCommands(
+  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
+  cmds: SyncCommand[],
+) {
+  const me = get().user;
+  const notifications = cmds.map((c) => ({
+    id: c.id,
+    userId: c.audience === "all" ? "all" : (me?.id ?? "all"),
+    title: `${c.severity === "critical" ? "🚨" : c.severity === "warning" ? "⚠️" : "📢"} ${c.title}`,
+    message: `${c.message}${c.createdBy ? `\n— ${c.createdBy} · Host Control` : ""}`,
+    type: (c.severity === "critical" ? "ALERT" : "SYSTEM") as Notification["type"],
+    isRead: false,
+    createdAt: c.createdAt,
+    linkView: (c.linkView as ViewId) ?? "alerts",
+  })) as Notification[];
+  set((s) => ({
+    notifications: cap([...notifications, ...s.notifications], 60),
+    hostCommands: cap([...cmds.map((c) => ({ id: c.id, title: c.title, from: c.createdBy, at: c.createdAt })), ...s.hostCommands], 40),
+  }));
+  for (const c of cmds) {
+    toast(c.severity === "critical" ? "Host Control — critical broadcast" : "Host Control broadcast", { description: c.title });
+  }
+}
 
 // helper: apply rule-evaluated alerts for a project after a mutation
 function applyNewAlerts(

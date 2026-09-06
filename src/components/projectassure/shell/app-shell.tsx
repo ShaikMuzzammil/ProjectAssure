@@ -101,7 +101,7 @@ export default function AppShell({ portal }: { portal: PortalId }) {
 
   const visibleViews = VIEWS_BY_ROLE[user.role].filter(v => v !== "project-detail");
 
-  const unread = notifications.filter(n => !n.isRead).length;
+  const unread = notifications.filter(n => !n.isRead && (n.userId === "all" || n.userId === user.id)).length;
 
   // keyboard shortcuts
   useEffect(() => {
@@ -351,20 +351,28 @@ function ThemeToggle() {
 
 function NotifPanel({ onClose }: { onClose: () => void }) {
   const notifications = useApp(s => s.notifications);
+  const me = useApp(s => s.user);
   const markRead = useApp(s => s.markNotificationRead);
   const markAll = useApp(s => s.markAllNotificationsRead);
   const navigate = useApp(s => s.navigate);
+  // v21 FIX: per-user isolation — a user now sees ONLY their own notifications
+  // plus explicit broadcasts (userId "all"). Previously every persona saw the
+  // entire feed, including other users' private welcome messages.
+  const mine = useMemo(
+    () => notifications.filter((n) => n.userId === "all" || n.userId === me?.id),
+    [notifications, me?.id]
+  );
   const grouped = useMemo(() => {
     const now = Date.now();
-    const today: typeof notifications = [], week: typeof notifications = [], earlier: typeof notifications = [];
-    for (const n of notifications) {
+    const today: typeof mine = [], week: typeof mine = [], earlier: typeof mine = [];
+    for (const n of mine) {
       const age = now - new Date(n.createdAt).getTime();
       if (age < 86400000) today.push(n); else if (age < 7 * 86400000) week.push(n); else earlier.push(n);
     }
     return { today, week, earlier };
-  }, [notifications]);
+  }, [mine]);
 
-  const row = (n: (typeof notifications)[number]) => (
+  const row = (n: (typeof mine)[number]) => (
     <button key={n.id} onClick={() => { markRead(n.id); if (n.linkView) navigate(n.linkView, { projectId: n.linkProjectId }); onClose(); }}
       className={cn("block w-full border-l-2 px-3 py-2 text-left transition hover:bg-muted/60", n.isRead ? "border-transparent" : "border-[#0c93e7] bg-[#0c93e7]/[0.04]")}>
       <div className="flex items-start justify-between gap-2">
@@ -387,7 +395,7 @@ function NotifPanel({ onClose }: { onClose: () => void }) {
       {grouped.week.map(row)}
       {grouped.earlier.length > 0 && <div className="px-3 pt-2 pb-0.5 text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground">Earlier</div>}
       {grouped.earlier.slice(0, 5).map(row)}
-      {notifications.length === 0 && <div className="px-3 py-8 text-center text-[11.5px] text-muted-foreground">No notifications yet — the portfolio heartbeat will populate this feed.</div>}
+      {mine.length === 0 && <div className="px-3 py-8 text-center text-[11.5px] text-muted-foreground">No notifications for you yet — your feed is private to this account.</div>}
     </div>
   );
 }
@@ -472,11 +480,14 @@ function Palette({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => vo
 // ─── Notifications (full-page) & Audit trail (standalone) ──────────────────
 function NotificationsView() {
   const notifications = useApp(s => s.notifications);
+  const me = useApp(s => s.user);
   const markRead = useApp(s => s.markNotificationRead);
   const markAll = useApp(s => s.markAllNotificationsRead);
   const navigate = useApp(s => s.navigate);
   const [filter, setFilter] = useState<"ALL" | "UNREAD">("ALL");
-  const list = notifications.filter(n => filter === "ALL" || !n.isRead);
+  // v21: per-user isolation — own feed + broadcasts only
+  const mine = notifications.filter(n => n.userId === "all" || n.userId === me?.id);
+  const list = mine.filter(n => filter === "ALL" || !n.isRead);
   return (
     <div className="mx-auto max-w-[820px] space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">

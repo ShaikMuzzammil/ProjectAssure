@@ -15,7 +15,9 @@ export type AlertType =
   | "DATA_STALENESS"
   | "RESOURCE_BOTTLENECK"
   | "DELAY_PREDICTION"
-  | "MANUAL_BROADCAST";
+  | "MANUAL_BROADCAST"
+  | "SCHEDULE_OVERSIGHT"
+  | "GEO_EVIDENCE";
 export type UserRole = "ADMIN" | "PROJECT_MANAGER" | "STAKEHOLDER" | "VIEWER";
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ResourceCategory = "HUMAN" | "EQUIPMENT" | "MATERIAL";
@@ -27,7 +29,8 @@ export type NotificationType = "ALERT" | "PREDICTION" | "DOCUMENT" | "SYSTEM" | 
 export type EmailStatus = "QUEUED" | "SENT" | "SIMULATED" | "FAILED";
 export type AuditAction =
   | "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "EXPORT" | "REGISTER"
-  | "AI_ACCEPT" | "AI_OVERRIDE" | "ALERT_ACK" | "EMAIL_SEND" | "PREDICTION_RUN" | "MODEL_RETRAIN" | "SETTINGS" | "UPLOAD";
+  | "AI_ACCEPT" | "AI_OVERRIDE" | "ALERT_ACK" | "EMAIL_SEND" | "PREDICTION_RUN" | "MODEL_RETRAIN" | "SETTINGS" | "UPLOAD"
+  | "ALERT_BROADCAST" | "MODEL_TRAIN" | "MODEL_PROMOTE" | "MODEL_RETIRE" | "EVIDENCE_SUBMIT" | "EVIDENCE_REVIEW" | "DEADLINE_WATCHDOG";
 export type PortalId = "main" | "analytics" | "ai";
 
 // ─── App views (hash-routed) ────────────────────────────────────────────────
@@ -274,6 +277,8 @@ export interface EmailAttachment {
   name: string;
   kind: "pdf" | "xlsx" | "csv" | "txt";
   sizeKb: number;
+  base64?: string;        // v21: REAL content — delivered by /api/email/send
+  contentType?: string;
 }
 export interface EmailMessage {
   id: string;
@@ -349,6 +354,7 @@ export interface ChatMessage {
   content: string;
   answer?: AiAnswer;
   createdAt: string;
+  files?: { name: string; size: number }[];   // v21: attached-file chips rendered in the transcript
 }
 export interface ChatThread {
   id: string;
@@ -486,6 +492,27 @@ export interface GlossaryTerm {
 }
 
 // ─── Project aggregate ──────────────────────────────────────────────────────
+export interface SiteEvidence {
+  id: string;
+  projectId: string;
+  milestoneId?: string;
+  milestoneName?: string;
+  fileName: string;
+  photoDataUrl: string;          // downscaled JPEG (≤900px) kept in the project record
+  gps?: { latitude: number; longitude: number };
+  gpsSource: "exif" | "browser" | "none";
+  capturedAt: string;            // EXIF DateTimeOriginal or geolocation capture time
+  verdict: "VERIFIED" | "NEAR_SITE" | "GPS_MISMATCH" | "STALE" | "NO_GPS";
+  distanceKm?: number;
+  reason: string;
+  submittedBy: string;
+  submittedAt: string;
+  reviewStatus: "pending" | "accepted" | "rejected";
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+}
+
 export interface Project {
   id: string;
   psId: string;
@@ -531,6 +558,7 @@ export interface Project {
   kpis?: ProjectKpi[];           // v3: sector KPIs (target vs actual)
   documents: DocumentItem[];
   alerts: Alert[];
+  evidence?: SiteEvidence[];
 }
 
 export interface PortfolioStats {

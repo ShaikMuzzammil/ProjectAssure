@@ -34,7 +34,12 @@ export default function DocPipeline({ project, compact = false }: { project: Pro
     if (!file) return;
     timers.current.forEach(clearTimeout); timers.current = [];
     setResult(null); setStage(0);
-    const { text, simulated } = await extractRawText(file);
+    const startedAt = performance.now();
+    const { text, simulated, engine } = await extractRawText(file);
+    const readMs = performance.now() - startedAt;
+    // v21: REAL server reading happens first (the "OCR" stage now reflects the
+    // actual parse time); the remaining stages are the deterministic pipeline.
+    STAGES[1].ms = Math.max(400, Math.round(readMs));
     STAGES.forEach((s, i) => {
       const t = setTimeout(() => {
         setStage(i);
@@ -45,7 +50,7 @@ export default function DocPipeline({ project, compact = false }: { project: Pro
           setResult(doc); setStage(5);
           const sec = (doc.processingMs ?? 5600) / 1000;
           toast.success(`Report processed in ${sec.toFixed(0)}s`, {
-            description: `${fields.length} fields validated  · embeddings indexed · dashboard updated · audit-logged`,
+            description: `${fields.length} fields validated · ${engine ? `read by ${engine}` : "parsed"}${simulated ? " (staged fallback)" : " · real content"} · embeddings indexed · dashboard updated`,
           });
         }
       }, STAGES.slice(0, i).reduce((a, s2) => a + s2.ms, 0) + 200);

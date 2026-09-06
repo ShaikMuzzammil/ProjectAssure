@@ -8,7 +8,6 @@ import {
   CheckCircle2, Globe, Activity, FileText, Mail, Workflow, Gauge, FolderKanban, FlaskConical, BookOpenCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import GovHeader from "../shared/gov-header";
 
 const fadeUp = { initial: { opacity: 0, y: 22 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, margin: "-80px" }, transition: { duration: 0.55, ease: [0.16, 1, 0.3, 1] as const } };
 
@@ -51,8 +50,9 @@ export default function LandingView() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      {/* v8: universal official portal band */}
-      <GovHeader surface="public" />
+      {/* v21: the top SIH/Amrita/secure strip is removed on the landing page
+          only (kept on login + app). The sticky product nav below is the first
+          thing a visitor sees now. */}
       {/* ─── Nav ─── */}
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
@@ -72,6 +72,8 @@ export default function LandingView() {
             <a href="#workflow" className="transition hover:text-foreground">Workflow</a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => goPage("public")} className="hidden rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground transition hover:text-foreground lg:block">Citizen view</button>
+            <button onClick={() => goPage("demo")} className="hidden rounded-lg border border-border px-3 py-2 text-[13px] font-semibold text-foreground transition hover:border-[#0c93e7] hover:text-[#0c93e7] sm:block">Demo personas</button>
             <button onClick={() => goPage("about")} className="hidden rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground transition hover:text-foreground sm:block">About</button>
             <button onClick={() => goPage("login")}
               className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#0b426e] to-[#0c93e7] px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:shadow-md hover:shadow-[#0c93e7]/25">

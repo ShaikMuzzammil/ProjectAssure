@@ -61,7 +61,7 @@ export interface MlFeatures {
 
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 
-export function extractFeatures(p: Project, now: Date = ANCHOR): MlFeatures {
+export function extractFeatures(p: Project, now: Date = new Date()): MlFeatures {
   const start = new Date(p.startDate).getTime();
   const target = new Date(p.targetDate).getTime();
   const nowT = now.getTime();
@@ -136,7 +136,7 @@ export function extractFeatures(p: Project, now: Date = ANCHOR): MlFeatures {
 // ─── Health score — exact documented sub-score formulas ─────────────────────
 export interface HealthScores { schedule: number; budget: number; resources: number; milestones: number; overall: number; }
 
-export function computeHealth(p: Project, now: Date = ANCHOR): HealthScores {
+export function computeHealth(p: Project, now: Date = new Date()): HealthScores {
   const f = extractFeatures(p, now);
   const progress = p.progress / 100;
 
@@ -214,7 +214,7 @@ const FACTOR_SPECS: FactorSpec[] = [
   { feature: "team_size_adequacy", weight: 1.1, bad: v => v < 0.85, scale: v => (0.85 - v) * 1.1, cap: 0.5, fmt: v => `${Math.round(v * 100)}% adequacy`, why: "Understaffed fronts cannot absorb any further disruption without slipping." },
 ];
 
-export function computeDelayPrediction(p: Project, modelVersion = MODEL_VERSION, now: Date = ANCHOR): PredictionResult {
+export function computeDelayPrediction(p: Project, modelVersion = MODEL_VERSION, now: Date = new Date()): PredictionResult {
   const f = extractFeatures(p, now);
   const isStory = p.story ? p.story.tier === "A" || p.story.tier === "C" : false;
   const damp = isStory ? 1 : 0.4; // healthy portfolio projects get damped contributions

@@ -38,12 +38,31 @@ export function nextPortfolioEvent(projects: Project[], user: User | null, thres
     const pending = p.milestones.filter(m => m.status === "IN_PROGRESS" || m.status === "PENDING");
     if (pending.length) {
       const m = pending[0];
+      const newProgress = Math.min(100, p.progress + 2);
       ev.projectId = p.id;
       ev.title = `Milestone completed — ${p.psId}`;
       ev.detail = `${m.name} marked COMPLETED on field report verification.`;
-      notifications.push({ id: uid("nt"), userId: "all", title: `✅ Milestone completed — ${p.name.replace(/,.*$/, "")}`, message: `${m.name} completed. Project progress advanced to ${Math.min(100, p.progress + 2)}%.`, type: "SYSTEM", isRead: false, createdAt: now.toISOString(), linkView: "project-detail", linkProjectId: p.id });
+      notifications.push({ id: uid("nt"), userId: "all", title: `✅ Milestone completed — ${p.name.replace(/,.*$/, "")}`, message: `${m.name} completed. Project progress advanced to ${newProgress}%.`, type: "SYSTEM", isRead: false, createdAt: now.toISOString(), linkView: "project-detail", linkProjectId: p.id });
       ev.kind = "milestone-completed";
-      return { event: ev, notifications, projectPatch: { projectId: p.id, patch: { progress: Math.min(100, p.progress + 2) } } };
+      // v21 FIX: the milestone is ACTUALLY completed now (status + actualDate +
+      // progress 100) — previously only the progress counter moved, so boards,
+      // Gantt bars and survival tables never reflected the event.
+      return {
+        event: ev,
+        notifications,
+        projectPatch: {
+          projectId: p.id,
+          patch: {
+            progress: newProgress,
+            milestones: p.milestones.map(mm => mm.id !== m.id ? mm : {
+              ...mm,
+              status: "COMPLETED" as const,
+              actualDate: now.toISOString(),
+              progress: 100,
+            }),
+          },
+        },
+      };
     }
   }
   if (kind === "budget-update" && monitored.length) {
@@ -124,6 +143,61 @@ export function nextPortfolioEvent(projects: Project[], user: User | null, thres
 }
 
 export const LIVE_EVENT_INTERVAL_MS = 15000;
+
+// ─── v21: DEADLINE WATCHDOG ─────────────────────────────────────────────
+// Automated milestone-update engine: on every heartbeat it finds milestones
+// whose planned date has passed WITHOUT completion evidence, marks them
+// DELAYED, fires an alert and queues the authority email — the "automated
+// alert when a deadline passes without progress" requirement, for real.
+export interface WatchdogResult {
+  triggered: number;
+  alerts: Alert[];
+  notifications: Notification[];
+  patches: { projectId: string; milestoneIds: string[] }[];
+}
+
+export function runDeadlineWatchdog(projects: Project[]): WatchdogResult {
+  const now = new Date();
+  const alerts: Alert[] = [];
+  const notifications: Notification[] = [];
+  const patches: { projectId: string; milestoneIds: string[] }[] = [];
+  for (const p of projects) {
+    if (p.status !== "ACTIVE" && p.status !== "ON_HOLD") continue;
+    const late = p.milestones.filter(m =>
+      m.status !== "COMPLETED" && m.status !== "DELAYED" &&
+      new Date(m.plannedDate).getTime() < now.getTime() - 86400000 // 1 day grace
+    );
+    if (!late.length) continue;
+    patches.push({ projectId: p.id, milestoneIds: late.map(m => m.id) });
+    for (const m of late) {
+      const daysLate = Math.round((now.getTime() - new Date(m.plannedDate).getTime()) / 86400000);
+      alerts.push({
+        id: uid("al"),
+        projectId: p.id,
+        title: `Deadline passed without progress — ${m.name}`,
+        description: `${p.psId}: milestone “${m.name}” was due ${daysLate} day${daysLate > 1 ? "s" : ""} ago with no completion evidence. Automated watchdog flagged and marked DELAYED.`,
+        severity: daysLate > 30 ? "CRITICAL" : "HIGH",
+        type: "SCHEDULE_OVERSIGHT",
+        isRead: false,
+        createdAt: now.toISOString(),
+        recommendedAction: m.isCritical
+          ? "Critical milestone overdue — convene a recovery review with the contractor today and re-baseline the schedule."
+          : "Contact the field officer for a progress note; if no evidence arrives in 48h, escalate to the department review.",
+        recommendedOwner: p.projectManager,
+        recommendedDeadline: "within 48 hours",
+        emailQueued: daysLate > 30 || m.isCritical,
+      });
+    }
+    notifications.push({
+      id: uid("nt"), userId: "all",
+      title: `⏰ ${late.length} overdue milestone${late.length > 1 ? "s" : ""} — ${p.psId}`,
+      message: `${late.map(m => m.name).join(", ")}: deadline passed without progress. Watchdog marked DELAYED${late.some(m => m.isCritical) ? " (critical items included)" : ""}.`,
+      type: "ALERT", isRead: false, createdAt: now.toISOString(),
+      linkView: "alerts", linkProjectId: p.id,
+    });
+  }
+  return { triggered: alerts.length, alerts, notifications, patches };
+}
 
 export function eventIcon(kind: LiveEvent["kind"]): string {
   return { "health-drift": "📊", "milestone-completed": "✅", "budget-update": "💰", "new-alert": "🚨", "document-processed": "📄", "prediction-run": "🔮", system: "⚙️" }[kind];
