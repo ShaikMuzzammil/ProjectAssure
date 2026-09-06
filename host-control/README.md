@@ -1,169 +1,106 @@
-# Host Control Plane — v22 (merged inside Prototype)
+# ProjectAssure Host Control
 
-The Host Control plane is the **master control tower** for ProjectAssure administrators. As of v22 it lives **inside** the prototype as the `/host-control` route — no separate deployment needed.
+> Master control plane for the ProjectAssure platform.
+> SIH 2026 · SIH26103 · Team NEXGEN.
+> The REAL bridge to the main app — nothing hardcoded, nothing faked.
 
-> **One web address.** Both the main dashboard and the host-control plane are served from the same Next.js app.
+## What it is
 
----
+- Government control tower for the whole portfolio
+- Mirrors every user, project, alert, event, email and login from the main app
+- Real host actions: approvals, broadcasts, access/role control, automated emails
+- Runs as its own Next.js app on port 3001 (deploy separately on Vercel)
 
-## Routes (all under `/host-control` UI + `/api/host/*` API)
-
-### UI
-- `GET /host-control` → login gate → admin shell (dashboard, users, projects, audit, alerts, intelligence, integrations, outbox, approvals)
-
-### API (namespaced under `/api/host`)
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/api/host/auth/login` | Admin login (PBKDF2 password verification) |
-| `POST` | `/api/host/auth/logout` | Clear admin session cookie |
-| `GET` | `/api/host/auth/session` | Check current session |
-| `GET` | `/api/host/health` | Host plane health probe |
-| `GET` | `/api/host/admin/sync?force=1` | Pull main-app state → merge into host store (polled every 5s) |
-| `GET` | `/api/host/admin/users` | List users + access records |
-| `POST` | `/api/host/admin/users` | Update a user's access (lock, suspend, reactivate, set budget) |
-| `GET` | `/api/host/admin/approvals` | Pending approval queue |
-| `POST` | `/api/host/admin/approvals` | Approve / reject a change order |
-| `POST` | `/api/host/admin/broadcast` | Broadcast an alert (optionally email recipients) |
-| `GET` | `/api/host/admin/settings` | Get host settings (login alerts, budget thresholds, etc.) |
-| `POST` | `/api/host/admin/settings` | Update settings |
-| `GET` | `/api/host/admin/export?format=csv|json` | Export full host state snapshot |
-| `POST` | `/api/host/email/send` | Send an email alert to a user (real SMTP or simulated) |
-| `GET` | `/api/host/email/status?verify=1` | Outbox + delivery status |
-| `POST` | `/api/host/ai/chat` | Ask Assure Intelligence (host context) |
-| `GET` | `/api/host/ai/status` | AI service status |
-
----
-
-## Architecture
-
-```
-src/
-├── app/
-│   ├── host-control/
-│   │   └── page.tsx              # Session gate → LoginView → Shell
-│   └── api/host/                # All host API routes (see table above)
-├── components/host/
-│   ├── shell.tsx                 # Sidebar + topbar + view switcher
-│   ├── login-view.tsx           # Admin login form
-│   ├── dashboard-view.tsx       # KPI grid + recent activity
-│   ├── users-view.tsx           # User list (filter / search / sort)
-│   ├── user-drawer.tsx          # Slide-over with per-user details
-│   ├── projects-view.tsx        # Mirrored project vault
-│   ├── alerts-view.tsx          # Broadcast composer
-│   ├── approvals-view.tsx       # Change-order approval queue
-│   ├── audit-view.tsx           # Tamper-proof audit trail
-│   ├── intelligence-view.tsx   # Assure AI panel (host context)
-│   ├── integrations-view.tsx   # SMTP, AI keys, sync settings
-│   ├── outbox-view.tsx          # Email log + resend
-│   ├── use-host-data.ts        # 5s polling hook
-│   ├── view-props.ts            # Shared prop types
-│   └── ui.tsx                   # Shared UI primitives
-└── lib/host/
-    ├── store.ts                  # Singleton store (globalThis + JSON persistence)
-    ├── sync.ts                   # Pulls main-app state, merges, raises approvals
-    ├── auth.ts                   # PBKDF2 hashing + cookie session
-    ├── mailer.ts                 # Nodemailer wrapper + simulated send
-    ├── format.ts                 # Indian formatting helpers
-    └── types.ts                  # Host-side TypeScript types
-```
-
----
-
-## Store design
-
-The host store is a **singleton** on `globalThis` so Next.js dev hot-reload keeps one instance. It persists to `.host-store.json` in the project root (local dev only — skipped on Vercel's read-only FS).
-
-State shape (see `src/lib/host/store.ts` → `PersistedData`):
-
-- `sync` — main-app reachability, last sync, revision, push/webhook counts
-- `mirror` — pushed + mirrored snapshots of users, projects, alerts, events, login feed, emails
-- `approvals` — change-order queue
-- `access` — per-user access record (budget, status, last login, lock state)
-- `broadcasts` — alert history
-- `outbox` — email log
-- `settings` — login alerts, budget thresholds, main URL override
-- `audit` — append-only audit trail (capped at 600 entries)
-
-Helpers exported:
-- `getStore()` — get the singleton controller
-- `scheduleSave()` / `saveNow()` — persistence
-- `audit(action, actor, detail, severity)` — append audit
-- `addOutboxEntry()`, `addBroadcastRecord()`, `upsertAccess()`, `addApproval()`, `capArray()`, `newId()`, `nowIso()`, `MIRROR_CAP`
-
----
-
-## Admin login
-
-The first admin is set via env vars:
-- `HOST_CONTROL_ADMIN_EMAIL` — login email
-- `HOST_CONTROL_ADMIN_PASSWORD_HASH` — generated by `src/lib/host/auth.ts → hashPassword()`
-
-To generate a hash locally:
-```bash
-node -e "import('./src/lib/host/auth.ts').then(m => console.log(m.hashPassword('changeme')))"
-```
-
-After login, the admin cookie (`pa-host-session`) is set as httpOnly + sameSite=strict, valid for 7 days. IP-based lockout triggers after 5 failed attempts in 10 minutes (runtime-only, never persisted).
-
----
-
-## Sync flow
-
-```
-Main app (prototype)
-   │
-   ├── POST /api/sync/push     (main → host: every mutation)
-   ├── GET  /api/sync/state    (host → main: poll state)
-   ├── POST /api/sync/webhook  (host → main: command)
-   └── GET  /api/sync/commands (host → main: pull commands)
-       │
-       ▼
-Host Control (/api/host/*)
-   │
-   ├── Pulls main state every 5s (use-host-data hook)
-   ├── Merges into mirror, raises approvals for new change-orders
-   ├── Auto-emails on budget breach (>20%) and welcomed new users
-   └── Logs every action to audit trail
-```
-
----
-
-## Demo flow (admin perspective)
-
-1. Visit `/host-control` → login screen.
-2. Sign in with admin email + password.
-3. See the **Dashboard** — sync pill (green when main reachable), KPIs (users, projects, alerts, emails today), recent activity.
-4. Click **Users** in the sidebar → see every registered user, their role, last login, project count, budget limit.
-5. Click any user → slide-over with their projects, audit, emails, login history, plus actions (suspend / reactivate / lock / set budget / send email).
-6. Click **Approvals** → review pending change-orders from the main app. Approve / reject with a note.
-7. Click **Alerts** → compose an alert, pick recipients, optionally auto-email them.
-8. Click **Intelligence** → ask "which projects are most at risk?" — gets a host-context answer.
-9. Click **Integrations** → toggle login-alert emails, change budget threshold, override the main-app URL.
-10. Click **Outbox** → see every email sent + delivery status; resend if needed.
-
----
-
-## Smoke test
+## Quick start (dev)
 
 ```bash
-APP=http://localhost:3000
-
-# Login
-curl -s -c /tmp/cookies -X POST $APP/api/host/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@projectassure.gov.in","password":"changeme"}' | jq .
-
-# Dashboard sync
-curl -s -b /tmp/cookies $APP/api/host/admin/sync | jq . | head -30
-
-# Users
-curl -s -b /tmp/cookies $APP/api/host/admin/users | jq . | head -30
-
-# Broadcast an alert
-curl -s -b /tmp/cookies -X POST $APP/api/host/admin/broadcast \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Test alert","body":"Smoke test","severity":"MEDIUM","emailRecipients":[]}' | jq .
-
-# Logout
-curl -s -b /tmp/cookies -X POST $APP/api/host/auth/logout | jq .
+cd host-control
+bun install            # or npm install
+cp .env.example .env.local
+bun run dev            # next dev -p 3001
 ```
+
+Then:
+
+- main app → `http://localhost:3000` (log in — its browser pushes the snapshot)
+- host control → `http://localhost:3001`
+- login → `cpo@mospi.gov.in` / `hostoverseer` (env-configured)
+
+No DATABASE_URL needed — state is an in-RAM singleton + `.host-store.json` (auto-saved, gitignored).
+
+## How sync works
+
+```
+main app (browser, logged in)
+  │  POST /api/sync/push        every 45s + on login + on actions
+  ▼
+main app sync hub (server)
+  │  GET  /api/sync/state       ← host polls every 5s (server-side, no CORS)
+  │  POST /api/sync/webhook     ← host broadcasts + user alerts
+  ▼
+host-control (this app)
+  │  mirror → approvals → automated emails → UI (5s poll)
+  │
+  └  main-app browsers poll /api/sync/commands every 20s
+     → broadcasts land as real notifications + toasts
+```
+
+- All main-app fetches happen SERVER-side (CORS never applies)
+- Unreachable main → last mirror served, marked STALE (amber badge)
+- First sync baselines existing records → only REAL new items become approvals
+- Optional push mode: `POST /api/admin/sync` with `x-sync-token` (SYNC_TOKEN)
+
+## Features
+
+- Login → real creds + HMAC-signed httpOnly cookie + IP lockout (6 fails / 10 min) + audit
+- Mission Dashboard → KPIs, health bands chart, at-risk list, live feed, sync card
+- User Management → sortable/filterable grid + per-user drawer (profile / security / projects / alerts / activity) + actions
+- User actions → restrict/restore access, role change, direct alert (webhook), direct email — each notifies the user for real
+- Projects Control → full grid, ₹Cr budgets, overrun %, milestones, detail drawer, CSV export
+- Approvals Centre → real derived items (new projects / new accounts / budget breaches) + decisions + owner notifications
+- Alerts & Broadcast → mirrored alert feed + broadcast (all users) + direct user alerts
+- Email Outbox → login / budget / welcome automation, provider chain (SMTP → Brevo → Resend), honest SIMULATED fallback, full log
+- Audit Trail → append-only, searchable, every action
+- Intelligence Console → AI chat grounded on the live mirror (Gemini → Groq → sandbox SDK → built-in engine)
+- Integrations → URL config + test, env checklist, setup guide
+
+## Env vars
+
+See `.env.example` (all documented).
+
+- `MAIN_PROJECT_URL` — main app URL (default `http://localhost:3000`)
+- `SYNC_TOKEN` — optional shared webhook secret
+- `HOST_ADMIN_EMAIL` / `HOST_ADMIN_PASSWORD` — login (change defaults!)
+- `HOST_SESSION_SECRET` — optional cookie-signing secret
+- `GEMINI_API_KEY`, `GROQ_API_KEY` — Intelligence providers
+- `EMAIL_USER` + `EMAIL_PASS` (+ `SMTP_HOST`, `SMTP_PORT`) — SMTP email
+- `BREVO_API_KEY`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` — HTTP email APIs
+
+## Deploy to Vercel (separate project)
+
+1. Push the repo (host-control folder included) to GitHub
+2. Vercel → Add New Project → import the repo
+3. Root Directory → `host-control`
+4. Framework preset → Next.js (auto)
+5. Env vars → add at least:
+   - `MAIN_PROJECT_URL=https://<your-main-app>.vercel.app`
+   - `HOST_ADMIN_EMAIL`, `HOST_ADMIN_PASSWORD` (strong)
+   - optional: `SYNC_TOKEN`, email keys, AI keys
+6. Deploy → login at `https://<host-control>.vercel.app`
+7. Main app side → set the same `SYNC_TOKEN` if you use one
+
+On Vercel:
+
+- `.host-store.json` persistence is skipped (read-only FS) → in-memory per lambda
+- approvals/audit/outbox reset on cold start; the mirror re-fills on first sync
+- for durable state, point Prisma at a database (schema kept minimal on purpose)
+
+## Security notes
+
+- Change `HOST_ADMIN_PASSWORD` before any real deployment
+- Session = HMAC-SHA256 signed httpOnly cookie, 8h TTL
+- Every `/api/admin/*` route rejects without a valid session (401)
+- 6 failed logins → 10-minute IP lockout (in-memory)
+- `x-sync-token` shared secret protects host ↔ main webhook traffic
+- Login attempts, decisions, broadcasts, emails — all audited
+- No secrets in code; env-only

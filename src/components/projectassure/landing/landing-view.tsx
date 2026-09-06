@@ -303,7 +303,7 @@ export default function LandingView() {
               <div>Problem SIH26103 · Theme: Smart Automation · Category: Software</div>
               <div>Team NEXGEN — Amrita Vishwa Vidyapeetham, Chennai Campus</div>
             </div>
-            <a href="/host-control" className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/10 hover:text-white">
+            <a href="#" onClick={(e) => { e.preventDefault(); window.open("https://projectassure-host.vercel.app", "_blank"); }} className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/10 hover:text-white">
               Host Control →
             </a>
           </div>

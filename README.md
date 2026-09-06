@@ -3,13 +3,81 @@
 **Smart India Hackathon 2026 · Problem SIH26103 · Smart Automation · Software**
 **Team NEXGEN — Amrita Vishwa Vidyapeetham, Chennai Campus**
 
-ProjectAssure is the intelligence cockpit that watches every rupee and every deadline across India's 1,800+ central-sector infrastructure projects. The prototype is a single Next.js application — the main dashboard lives at `/`, and the master control plane (formerly a separate `host-control` app) is merged inside as `/host-control`.
+ProjectAssure is the intelligence cockpit that watches every rupee and every deadline across India's 1,800+ central-sector infrastructure projects.
 
-> This folder is **self-contained**. Host Control is **inside** this prototype as `/host-control` — no separate app to deploy.
+> **Two-deployment structure** — this folder contains TWO separate Next.js apps:
+> 1. **Main app** (root of `prototype/`) — the public dashboard, login, tracking, India map, geo-audit, AI assistant, prediction engine, reports. Deploy as one Vercel project.
+> 2. **Host Control** (`prototype/host-control/`) — the master control tower for administrators. Deploy as a **separate** Vercel project (port 3001 in dev). It syncs with the main app via the `/api/sync/*` API.
 
 ---
 
-## What's new in v22
+## Folder structure
+
+```
+prototype/                          ← MAIN APP (Vercel project #1)
+├── src/                            # Next.js source
+│   ├── app/
+│   │   ├── page.tsx                # Hash-routed AppRoot (landing/login/app)
+│   │   ├── api/
+│   │   │   ├── ai/                 # AI chat (z-ai-web-dev-sdk)
+│   │   │   ├── auth/               # Register / login
+│   │   │   ├── email/              # Email send + status
+│   │   │   ├── sync/               # Main ↔ Host sync (push/state/commands/webhook)
+│   │   │   ├── users/              # User list
+│   │   │   └── health/             # Health probe
+│   │   ├── globals.css
+│   │   └── layout.tsx
+│   ├── components/
+│   │   ├── projectassure/          # Main app components + 3 NEW views
+│   │   │   ├── views/              # tracking, geo-audit, india-map (NEW in v22)
+│   │   │   ├── shared/             # Gantt, geo-evidence, ai-chat-panel
+│   │   │   ├── shell/              # App shell
+│   │   │   ├── landing/, auth/, about/, public/
+│   │   │   └── app-root.tsx
+│   │   └── ui/                     # shadcn/ui (60+ components)
+│   ├── lib/
+│   │   ├── projectassure/          # Engine (ml, rag, agent, geo, reports, etc.)
+│   │   ├── sync/                   # Main ↔ Host sync client/server
+│   │   └── db.ts                   # Prisma client
+│   ├── store/
+│   │   └── app-store.ts            # Zustand store
+│   └── hooks/                      # use-mobile, use-toast
+├── prisma/                         # Prisma schema (3 variants)
+├── public/                         # logo.svg, robots.txt
+├── package.json                    # Main app deps
+├── next.config.ts, tsconfig.json, tailwind.config.ts, etc.
+├── .env.example
+├── vercel.json
+│
+└── host-control/                   ← HOST CONTROL (Vercel project #2 — SEPARATE)
+    ├── src/
+    │   ├── app/
+    │   │   ├── page.tsx            # Host Control UI (session gate → shell)
+    │   │   ├── api/                # Host's OWN API (NOT merged with main app)
+    │   │   │   ├── admin/          # users, approvals, broadcast, sync, settings, export
+    │   │   │   ├── auth/           # login, logout, session
+    │   │   │   ├── ai/             # chat, status
+    │   │   │   ├── email/          # send, status
+    │   │   │   └── health/
+    │   │   ├── globals.css
+    │   │   └── layout.tsx
+    │   ├── components/host/        # Host UI components (shell, views, drawer)
+    │   └── lib/
+    │       ├── host/               # store, sync, auth, mailer, format, types
+    │       ├── db.ts
+    │       └── utils.ts
+    ├── prisma/schema.prisma
+    ├── public/robots.txt
+    ├── package.json                # Host's OWN deps (separate from main app)
+    ├── next.config.ts, tsconfig.json, etc.
+    ├── .env.example, .gitignore, .npmrc
+    ├── vercel.json
+    └── README.md                   # Host-control API reference
+```
+
+---
+
+## ✨ What's new in v22
 
 | # | Feature | Where |
 |---|---------|-------|
@@ -17,188 +85,156 @@ ProjectAssure is the intelligence cockpit that watches every rupee and every dea
 | 2 | **Geo-Tagged Site Audits** — GPS-locked photo upload with capture timestamps; auto-flags off-site photos | `#/app/geo-audit` |
 | 3 | **India Project Map** — interactive Leaflet map of India with project pins coloured by delay probability | `#/app/india-map` |
 | 4 | **AI-Driven Delay Prediction** — 18-feature ML model with confidence intervals + factor breakdown | `#/app/model-lab` |
-| 5 | **Automated Alert System** — email + SMS simulation, escalates at 10% / 20% budget overrun, slips above threshold | `#/app/alerts` + `/api/host/admin/broadcast` |
-| 6 | **Role-Based Access Control** — 4 roles (Admin / Project Manager / Stakeholder / Viewer) — sidebar adapts | `src/lib/projectassure/permissions.ts` |
-| 7 | **Merged Host Control** — `/host-control` route + `/api/host/*` API surface — no separate deployment needed | `src/app/host-control/` |
-| 8 | **Enhanced Login Background** — animated mesh gradient + India silhouette + grid overlay | `src/components/projectassure/auth/login-view.tsx` |
-| 9 | **Cleaner Landing Nav** — removed "Demo personas" + "Citizen view" from top nav (already in About) | `src/components/projectassure/landing/landing-view.tsx` |
-| 10 | **All build errors fixed** — Host Control store exports, Turbopack config, ESLint warnings suppressed | see `CHANGELOG` |
+| 5 | **Automated Alert System** — email + SMS simulation, escalates at 10% / 20% budget overrun | `#/app/alerts` |
+| 6 | **Role-Based Access Control** — 4 roles (Admin / PM / Stakeholder / Viewer) — sidebar adapts | `src/lib/projectassure/permissions.ts` |
+| 7 | **Enhanced Login Background** — animated mesh gradient + India silhouette + grid overlay | `src/components/projectassure/auth/login-view.tsx` |
+| 8 | **Cleaner Landing Nav** — removed "Demo personas" + "Citizen view" from top nav (already in About) | `src/components/projectassure/landing/landing-view.tsx` |
 
 ---
 
-## Architecture
+## Two-deployment architecture
 
 ```
-prototype/
-├── src/
-│   ├── app/
-│   │   ├── page.tsx                    # Mounts the hash-routed AppRoot
-│   │   ├── host-control/page.tsx       # ← Merged Host Control UI
-│   │   └── api/
-│   │       ├── ai/                     # Main app AI chat (z-ai-web-dev-sdk)
-│   │       ├── auth/                   # Main app register/login
-│   │       ├── email/                  # Main app email send/status
-│   │       ├── sync/                   # Main ↔ Host sync (push/state/commands/webhook)
-│   │       ├── users/                  # User list
-│   │       ├── health/                # Health probe
-│   │       └── host/                   # ← Merged host-control API (namespaced)
-│   │           ├── admin/              # /api/host/admin/{users,approvals,broadcast,settings,sync,export}
-│   │           ├── auth/               # /api/host/auth/{login,logout,session}
-│   │           ├── ai/                 # /api/host/ai/{chat,status}
-│   │           ├── email/              # /api/host/email/{send,status}
-│   │           └── health/             # /api/host/health
-│   ├── components/
-│   │   ├── projectassure/              # Main app components
-│   │   │   ├── app-root.tsx            # Hash router (landing/about/login/demo/public/app)
-│   │   │   ├── landing/                # Public landing page
-│   │   │   ├── auth/                   # Login + sign-up + demo persona picker
-│   │   │   ├── shell/                  # App shell (sidebar + topbar + view router)
-│   │   │   ├── views/                 # 25+ feature views (NEW: tracking, geo-audit, india-map)
-│   │   │   └── shared/                # Gantt, geo-evidence, ai-chat-panel, gov-header
-│   │   ├── host/                       # ← Merged Host Control components
-│   │   └── ui/                         # shadcn/ui (60+ components)
-│   ├── lib/
-│   │   ├── projectassure/             # Engine: ml, rag, agent, risks, reports, geo, etc.
-│   │   ├── host/                      # ← Merged Host Control lib (store, sync, mailer, auth)
-│   │   ├── sync/                       # Main ↔ Host sync client/server
-│   │   └── db.ts                      # Prisma client
-│   ├── store/
-│   │   └── app-store.ts                # Zustand store (auth, projects, routes, notifications, ML)
-│   └── hooks/                          # use-mobile, use-toast
-├── prisma/
-│   ├── schema.prisma                   # PostgreSQL schema (default)
-│   ├── schema.sqlite.prisma            # SQLite fallback for local dev
-│   └── schema.postgres.prisma          # PostgreSQL production schema
-├── public/
-│   ├── logo.svg
-│   └── robots.txt
-├── package.json
-├── tsconfig.json
-├── tailwind.config.ts
-├── next.config.ts
-├── eslint.config.mjs
-├── components.json                     # shadcn/ui config
-├── .env.example
-└── README.md  (you are here)
+                        ┌─────────────────────────────────┐
+                        │       Vercel Project #1        │
+                        │   (main app — this folder)     │
+                        │                                │
+                        │   /                Landing     │
+                        │   /#/login         Sign in     │
+                        │   /#/app/tracking  Live Gantt  │
+                        │   /#/app/india-map Leaflet     │
+                        │   /#/app/geo-audit GPS photos  │
+                        │   /#/app/model-lab ML predict  │
+                        │   /api/sync/*      Sync API    │
+                        └────────┬───────────────────────┘
+                                 │ HTTP push/pull
+                                 ▼
+                        ┌─────────────────────────────────┐
+                        │      Vercel Project #2         │
+                        │  (host-control/ subfolder)      │
+                        │                                │
+                        │   /                Admin login │
+                        │   /#/dashboard     KPI grid    │
+                        │   /#/users         User mgmt  │
+                        │   /#/approvals     Change ord.│
+                        │   /#/alerts        Broadcast  │
+                        │   /#/audit         Audit trail│
+                        │   /api/admin/*      Host API  │
+                        └────────────────────────────────┘
 ```
+
+The main app pushes state changes to the host-control via `/api/sync/push`. The host-control polls the main app's `/api/sync/state` every 5s to keep its mirror warm.
 
 ---
 
-## Quick start (local dev)
+## Quick start (local dev — run BOTH apps)
 
 ```bash
-# 1. Install deps
+# Terminal 1 — Main app (port 3000)
+cd prototype
 npm install --legacy-peer-deps
-
-# 2. Copy env template and set secrets
 cp .env.example .env
-# Edit .env — set DATABASE_URL, NEXTAUTH_SECRET, HOST_CONTROL_ADMIN_EMAIL etc.
+# Edit .env — set DATABASE_URL, NEXTAUTH_SECRET, NEXT_PUBLIC_HOST_URL
+bun run db:push
+bun run dev          # → http://localhost:3000
 
-# 3. Push the Prisma schema (SQLite by default — easiest local dev)
-bun run db:push   # or: npx prisma db push --accept-data-loss
-
-# 4. Run dev server
-bun run dev        # or: npm run dev
-# → http://localhost:3000
-
-# 5. Open the Host Control plane
-# → http://localhost:3000/host-control
+# Terminal 2 — Host Control (port 3001)
+cd prototype/host-control
+npm install --legacy-peer-deps
+cp .env.example .env
+# Edit .env — set HOST_CONTROL_ADMIN_EMAIL, HOST_CONTROL_ADMIN_PASSWORD_HASH,
+#             MAIN_APP_URL=http://localhost:3000
+bun run db:push
+bun run dev          # → http://localhost:3001
 ```
 
 Demo personas (every password is `demo1234`):
-- `ananya.k@nic.in` — Administrator
-- `priya.v@nic.in` — Project Manager
-- `karthik.s@nic.in` — Stakeholder (financial auditor)
-- `rahul.s@nhai.gov.in` — Project Manager (roads)
+- `ananya.k@nic.in` — Administrator (main app)
+- `priya.v@nic.in` — Project Manager (main app)
+- `karthik.s@nic.in` — Stakeholder (financial auditor, main app)
+- `rahul.s@nhai.gov.in` — Project Manager (roads, main app)
+- Host Control admin: configured via `HOST_CONTROL_ADMIN_EMAIL` env var
 
 ---
 
-## Deploy to Vercel (one web address)
+## Deploy to Vercel (two separate projects)
 
-1. Push this `prototype/` folder to a GitHub repo (root of `main` branch).
-2. Go to [vercel.com/new](https://vercel.com/new), import the repo.
-3. Framework preset → **Next.js**. Build command: `next build`. Output: leave default.
-4. Add environment variables (see `.env.example`):
-   - `DATABASE_URL` — Postgres (Vercel Postgres free tier works)
-   - `NEXTAUTH_SECRET` — `openssl rand -base64 32`
-   - `HOST_CONTROL_ADMIN_EMAIL` — your admin login email
-   - `HOST_CONTROL_ADMIN_PASSWORD_HASH` — scrypt-style hash (see `src/lib/host/auth.ts`)
-   - Optional: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` for real email outbox
-5. Deploy. Both the dashboard and `/host-control` will be live on the **same** URL.
+### Project 1 — Main app
 
-> **Note**: Vercel's read-only filesystem means the host-control store lives in RAM per lambda instance. For persistent state across cold starts, use Vercel Postgres + a `prisma db push` step.
+1. Push this `prototype/` folder to a GitHub repo (root of `main`).
+2. On [vercel.com/new](https://vercel.com/new), import the repo.
+3. **Root Directory** → leave as `/` (project root).
+4. Framework → Next.js. Build → `next build`. Install → `npm install --legacy-peer-deps`.
+5. Env vars: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXT_PUBLIC_HOST_URL` (will be the host-control URL after step 2).
+6. Deploy → e.g., `https://projectassure.vercel.app`.
+
+### Project 2 — Host Control
+
+1. On Vercel, import the **same GitHub repo**.
+2. **Root Directory** → set to `host-control/` (NOT `/`).
+3. Framework → Next.js. Build → `next build`. Install → `npm install --legacy-peer-deps`.
+4. Env vars: `DATABASE_URL` (can be same Postgres), `HOST_CONTROL_ADMIN_EMAIL`, `HOST_CONTROL_ADMIN_PASSWORD_HASH`, `MAIN_APP_URL=https://projectassure.vercel.app`.
+5. Deploy → e.g., `https://projectassure-host.vercel.app`.
+6. Back in Project 1, set `NEXT_PUBLIC_HOST_URL=https://projectassure-host.vercel.app` and redeploy.
+
+> Both apps share the same database; per-row `app` field isolates main-app data from host-control mirror data.
+
+See `DEPLOYMENT.md` for full Vercel/Docker/on-prem instructions.
 
 ---
 
 ## Tech stack
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Framework | **Next.js 16** (App Router, Turbopack) | One web address, zero config, server components for SSR |
-| Language | **TypeScript 5** | Strict typing across UI + API + lib |
-| UI | **shadcn/ui** + Tailwind 4 + Radix + Framer Motion | 60+ accessible components, dark mode, animated transitions |
-| State | **Zustand** + **TanStack Query** | Client state + server cache, no boilerplate |
-| Database | **Prisma ORM** + PostgreSQL (or SQLite locally) | Type-safe schema, migrations, transactions |
-| Maps | **Leaflet 1.9** (CDN-loaded, no SSR issue) | Free, OpenStreetMap tiles, India-friendly |
-| Charts | **Recharts** | Composable React charts (Gantt, status bars, sparklines) |
-| AI | **z-ai-web-dev-sdk** (chat + vision) | RAG over project corpus, evidence-cited answers |
-| Auth | **Web Crypto** (scrypt-style hashing) + NextAuth available | Zero-cost secure accounts |
-| Email | **Nodemailer** (optional SMTP) | Real SMTP if configured, simulated otherwise |
-| Export | **jsPDF** + **xlsx (SheetJS)** | PDF dossiers + Excel/CSV data exports |
-| Real-time | **Zustand live events** (5s heartbeat) + 45s sync poll | Deterministic demo, swappable for WebSocket later |
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript 5 |
+| UI | shadcn/ui + Tailwind 4 + Radix + Framer Motion |
+| State | Zustand + TanStack Query |
+| Database | Prisma ORM + PostgreSQL (or SQLite locally) |
+| Maps | Leaflet 1.9 (CDN-loaded, India-friendly) |
+| Charts | Recharts |
+| AI | z-ai-web-dev-sdk (chat + vision + RAG) |
+| Auth | Web Crypto (PBKDF2 for main; PBKDF2-SHA256 for host) |
+| Email | Nodemailer (optional SMTP) |
+| Export | jsPDF + xlsx (SheetJS) |
 
 ---
 
-## Role-based access control
+## Role-based access control (main app)
 
 | Role | Sidebar | Can do |
 |------|---------|--------|
-| **ADMIN** (Administrator) | Dashboard, Live Tracking, India Map, Projects, Assure AI, Prediction Engine, Reports, Email Centre, Help, Admin | Everything — manage users, broadcast alerts, sync, settings, exports |
-| **PROJECT_MANAGER** (Field officer) | Dashboard, Live Tracking, Geo-Audit, India Map, Projects, AI, Prediction, Reports, Email, Help | Create/edit projects, upload docs, submit evidence, run predictions, send emails |
-| **STAKEHOLDER** (Financial auditor) | Dashboard, Live Tracking, India Map, Projects, AI, Reports, Help | Read-only oversight, exports, alerts |
-| **VIEWER** (Public citizen) | Dashboard, India Map, Projects, AI, Help | Read-only briefing |
-
----
-
-## NPM scripts
-
-```bash
-bun run dev           # Next.js dev server (port 3000)
-bun run build         # Production build (Vercel-compatible)
-bun run start         # Serve the production build (port 3000)
-bun run lint          # ESLint
-bun run db:push       # Push Prisma schema → database
-bun run db:generate   # Regenerate Prisma client
-bun run db:migrate    # Create + apply migration
-bun run db:reset      # Drop + recreate (dev only!)
-```
+| **ADMIN** | Dashboard, Live Tracking, India Map, Projects, AI, Prediction, Reports, Email, Help, Admin | Everything |
+| **PROJECT_MANAGER** | Dashboard, Live Tracking, Geo-Audit, India Map, Projects, AI, Prediction, Reports, Email, Help | Create/edit projects, upload docs, submit evidence, run predictions |
+| **STAKEHOLDER** | Dashboard, Live Tracking, India Map, Projects, AI, Reports, Help | Read-only oversight, exports, alerts |
+| **VIEWER** | Dashboard, India Map, Projects, AI, Help | Read-only briefing |
 
 ---
 
 ## Documentation
 
-- `DEPLOYMENT.md` — Step-by-step Vercel/Docker/on-prem deployment
-- `host-control/README.md` — Host Control plane reference
+- `DEPLOYMENT.md` — Step-by-step Vercel (2 projects) + Docker + on-prem
+- `host-control/README.md` — Host Control API reference + store design
 - `docs/USER_GUIDE.md` — End-user walkthrough
 - `docs/TEAM_GUIDE.md` — Developer onboarding
 - `docs/WORKFLOWS.md` — 15 numbered user workflows
-- `docs/PROTOTYPE_FEATURE_MAP.md` — Feature inventory
 - `docs/reference-md/` — Deep dives (architecture, tech stack, DB schema, API design, AI/ML engine, UI/UX system, DevOps, build prompts)
 
 ---
 
 ## Live demo flow (for the jury)
 
-1. Open the deployed URL → landing page (cleaner nav now, no demo personas in top bar).
+1. Open the main app URL → landing page (cleaner nav).
 2. Click **Launch demo** → login page (enhanced animated background).
-3. Sign in as `ananya.k@nic.in` / `demo1234` (Admin) → see the portfolio dashboard.
-4. Click **Live Tracking** in the sidebar → milestone status bars + 5s live feed.
-5. Click **India Map** → interactive Leaflet map, click any pin for project details.
-6. Click **Geo-Audit** → upload a site photo (camera works on mobile), see GPS lock + verification.
-7. Click **Prediction Engine** → run a delay prediction, see the 18-feature breakdown.
-8. Click **Email Centre** → send a portfolio report to any email address.
-9. Sign out, sign in as `karthik.s@nic.in` (Stakeholder) → see the role-scoped sidebar.
-10. Visit `/host-control` → log in with admin credentials → see the master control tower.
+3. Sign in as `ananya.k@nic.in` / `demo1234` (Admin).
+4. Click **Live Tracking** → milestone status bars + 5s live feed.
+5. Click **India Map** → interactive Leaflet map, click any pin.
+6. Click **Geo-Audit** → upload a site photo, see GPS lock + verification.
+7. Click **Prediction Engine** → run a delay prediction.
+8. Click **Email Centre** → send a portfolio report to any email.
+9. Open the host-control URL in a new tab → admin login → control tower.
+10. Back in main app, sign in as `karthik.s@nic.in` → role-scoped sidebar.
 
 ---
 
