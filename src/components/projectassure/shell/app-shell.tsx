@@ -15,6 +15,7 @@ import {
   Menu, X, Activity, Sparkles, Gauge, Zap, PanelRightClose, GitCompareArrows,
   ClipboardList, BookOpenCheck, Workflow,
   IndianRupee, PieChart, Scale, ShoppingCart, FileEdit, Building2,
+  Crosshair, MapPin,
 } from "lucide-react";
 import { Command as CommandPrimitive } from "cmdk";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -50,6 +51,10 @@ import ProcurementView from "../views/procurement-view";
 import ChangeOrdersView from "../views/change-orders-view";
 import AuthorityReviewView from "../views/authority-review-view";
 import ProjectSearchView from "../views/project-search-view";
+// v22: Real-time tracking stack
+import TrackingView from "../views/tracking-view";
+import GeoAuditView from "../views/geo-audit-view";
+import IndiaMapView from "../views/india-map-view";
 
 // v6 COMPACT NAV — one flat list of 7 core features (label: what it does, in one word).
 // group "" keeps the sidebar flat; hidden views keep their meta for ⌘K / deep links.
@@ -79,6 +84,10 @@ const NAV_META: Record<ViewId, { icon: React.ElementType; label: string; group: 
   "progress-mismatch": { icon: Scale, label: "Progress Mismatch", group: "_hidden" },
   procurement: { icon: ShoppingCart, label: "Procurement", group: "_hidden" },
   "change-orders": { icon: FileEdit, label: "Change Orders", group: "_hidden" },
+  // v22: Real-time tracking — Gantt + India map + geo-audit (NEW)
+  tracking: { icon: Activity, label: "Live Tracking", group: "" },
+  "geo-audit": { icon: Crosshair, label: "Geo-Audit", group: "" },
+  "india-map": { icon: MapPin, label: "India Map", group: "" },
   "authority-review": { icon: Building2, label: "Authority Review", group: "_hidden" },
   search: { icon: Search, label: "Project Search", group: "_hidden" },
 };
@@ -145,6 +154,9 @@ export default function AppShell({ portal }: { portal: PortalId }) {
       case "change-orders": return <ChangeOrdersView />;
       case "authority-review": return <AuthorityReviewView />;
       case "search": return <ProjectSearchView />;
+      case "tracking": return <TrackingView />;
+      case "geo-audit": return <GeoAuditView />;
+      case "india-map": return <IndiaMapView />;
       default: return <DashboardView />;
     }
   };

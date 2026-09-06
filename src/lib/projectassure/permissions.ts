@@ -56,10 +56,10 @@ export function canTouchProject(user: User | null, projectManager: string): bool
 // Deep screens (alerts, interventions, compare, analytics, simple-suite extras)
 // stay routable via in-screen links, the bell, ⌘K and the project cards.
 export const VIEWS_BY_ROLE: Record<UserRole, ViewId[]> = {
-  ADMIN: ["monitor", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help", "admin"],
-  PROJECT_MANAGER: ["monitor", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help"],
-  STAKEHOLDER: ["monitor", "projects", "ai-assistant", "reports", "help"],
-  VIEWER: ["monitor", "projects", "ai-assistant", "help"],
+  ADMIN: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help", "admin"],
+  PROJECT_MANAGER: ["monitor", "tracking", "geo-audit", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help"],
+  STAKEHOLDER: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "reports", "help"],
+  VIEWER: ["monitor", "india-map", "projects", "ai-assistant", "help"],
 };
 
 export const ROLE_LABEL: Record<UserRole, string> = {

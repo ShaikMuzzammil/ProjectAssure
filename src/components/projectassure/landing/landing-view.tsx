@@ -72,8 +72,6 @@ export default function LandingView() {
             <a href="#workflow" className="transition hover:text-foreground">Workflow</a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={() => goPage("public")} className="hidden rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground transition hover:text-foreground lg:block">Citizen view</button>
-            <button onClick={() => goPage("demo")} className="hidden rounded-lg border border-border px-3 py-2 text-[13px] font-semibold text-foreground transition hover:border-[#0c93e7] hover:text-[#0c93e7] sm:block">Demo personas</button>
             <button onClick={() => goPage("about")} className="hidden rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground transition hover:text-foreground sm:block">About</button>
             <button onClick={() => goPage("login")}
               className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#0b426e] to-[#0c93e7] px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:shadow-md hover:shadow-[#0c93e7]/25">
@@ -305,6 +303,9 @@ export default function LandingView() {
               <div>Problem SIH26103 · Theme: Smart Automation · Category: Software</div>
               <div>Team NEXGEN — Amrita Vishwa Vidyapeetham, Chennai Campus</div>
             </div>
+            <a href="/host-control" className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/10 hover:text-white">
+              Host Control →
+            </a>
           </div>
         </div>
       </footer>

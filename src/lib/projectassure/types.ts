@@ -42,7 +42,9 @@ export type ViewId =
   | "workflow"   // v4: in-app "How the platform works" walkthrough (team onboarding)
   // v5: Simple Monitoring Suite — one-concept-per-page screens for first-time teammates
   | "monitor" | "cost-benchmark" | "budget-variance" | "progress-mismatch"
-  | "risk-score" | "procurement" | "change-orders" | "authority-review" | "search";
+  | "risk-score" | "procurement" | "change-orders" | "authority-review" | "search"
+  // v22: Real-time tracking stack — Gantt + India map + geo-audit
+  | "tracking" | "geo-audit" | "india-map";
 
 // ─── Organisation ───────────────────────────────────────────────────────────
 export interface Department {

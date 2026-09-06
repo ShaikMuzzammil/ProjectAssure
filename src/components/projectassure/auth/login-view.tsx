@@ -37,7 +37,57 @@ export default function LoginView() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-br from-slate-100 via-white to-sky-100/70 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950">
+      {/* v22 enhanced background: animated India map mesh + grid + glow */}
+      <div className="pointer-events-none absolute inset-0">
+        {/* Deep navy base */}
+        <div className="absolute inset-0 bg-gradient-to-br from-[#04122a] via-[#06243d] to-[#04101e]" />
+        {/* Animated mesh gradient — slow drift */}
+        <div className="absolute inset-0 opacity-70"
+          style={{
+            background: `
+              radial-gradient(900px 540px at 12% 18%, rgba(12,147,231,0.35), transparent 60%),
+              radial-gradient(720px 480px at 88% 22%, rgba(245,158,11,0.18), transparent 55%),
+              radial-gradient(680px 460px at 76% 82%, rgba(16,185,129,0.18), transparent 55%),
+              radial-gradient(540px 360px at 22% 88%, rgba(124,200,251,0.16), transparent 55%)
+            `,
+            animation: "pa-mesh-drift 18s ease-in-out infinite alternate",
+          }} />
+        {/* SVG India silhouette — subtle white outline watermark */}
+        <svg viewBox="0 0 512 580" className="absolute left-1/2 top-1/2 h-[120%] -translate-x-1/2 -translate-y-1/2 opacity-[0.07]"
+          style={{ animation: "pa-india-pulse 9s ease-in-out infinite" }}>
+          <path d="M 196 32 L 232 28 L 268 38 L 296 56 L 318 78 L 322 96 L 312 116 L 296 130 L 304 152 L 322 168 L 344 178 L 360 192 L 372 220 L 386 250 L 398 280 L 412 300 L 422 322 L 414 350 L 396 376 L 372 392 L 348 408 L 322 416 L 296 424 L 280 442 L 268 470 L 252 502 L 236 528 L 220 548 L 206 558 L 196 552 L 192 528 L 196 502 L 200 470 L 196 440 L 188 412 L 174 392 L 154 380 L 130 374 L 104 370 L 80 358 L 64 338 L 52 310 L 44 280 L 40 250 L 44 222 L 56 196 L 72 174 L 88 156 L 96 134 L 100 110 L 108 88 L 122 70 L 140 56 L 162 46 L 180 38 Z"
+            fill="none" stroke="white" strokeWidth="1.5" />
+          {/* Project pin dots */}
+          <circle cx="240" cy="280" r="3" fill="#0c93e7" />
+          <circle cx="280" cy="240" r="3" fill="#10b981" />
+          <circle cx="220" cy="340" r="3" fill="#f59e0b" />
+          <circle cx="180" cy="200" r="3" fill="#8b5cf6" />
+          <circle cx="320" cy="280" r="3" fill="#dc2626" />
+          <circle cx="160" cy="320" r="3" fill="#0c93e7" />
+        </svg>
+        {/* Grid overlay */}
+        <div className="absolute inset-0 opacity-[0.18]"
+          style={{
+            backgroundImage: `linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)`,
+            backgroundSize: "44px 44px",
+            maskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+            WebkitMaskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+          }} />
+        {/* Floating particles — top */}
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#7cc8fb]/60 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#f59e0b]/50 to-transparent" />
+      </div>
+      <style>{`
+        @keyframes pa-mesh-drift {
+          0%   { transform: translate3d(0,0,0) scale(1); }
+          100% { transform: translate3d(2%,-2%,0) scale(1.05); }
+        }
+        @keyframes pa-india-pulse {
+          0%,100% { opacity: 0.05; transform: translate(-50%,-50%) scale(1); }
+          50%     { opacity: 0.09; transform: translate(-50%,-50%) scale(1.02); }
+        }
+      `}</style>
       {/* v8: universal official portal band on the login surface too */}
       <GovHeader surface="public" className="relative z-10" />
       <div className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-8">

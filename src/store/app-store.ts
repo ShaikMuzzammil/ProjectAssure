@@ -1293,4 +1293,6 @@ export const ROUTE_TITLES: Record<ViewId, string> = {
   "cost-benchmark": "Cost Benchmark", "budget-variance": "Budget Variance",
   "progress-mismatch": "Progress Mismatch", "risk-score": "Risk Scores", procurement: "Procurement Anomaly",
   "change-orders": "Change Orders", "authority-review": "Authority Review", search: "Project Search",
+  // v22: Real-time tracking stack
+  tracking: "Real-Time Tracking Dashboard", "geo-audit": "Geo-Tagged Site Audits", "india-map": "India Project Map",
 };
