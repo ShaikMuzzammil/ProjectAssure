@@ -1,11 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Host Control store — server-side singleton, in-RAM + JSON file persistence.
+// Host Control store — server-side singleton.
 //
 // · Lives on globalThis so Next.js dev hot-reload keeps one instance.
-// · Persists to `.host-store.json` in the project root (local dev survives
-//   restarts). Persistence is skipped entirely on Vercel (read-only FS) —
-//   there the store lives in memory for the life of the lambda instance.
-// · No DATABASE_URL required at runtime.
+// · Persistence chain (first that applies):
+//     1. DATABASE_URL → HostState row (survives Vercel cold starts)
+//     2. .host-store.json local file (dev restarts)
+//     3. in-memory only
 // · IP lockouts are deliberately RUNTIME-ONLY (never persisted).
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -28,7 +28,7 @@ import type {
   SyncUser,
 } from "./types";
 
-const STORE_VERSION = 21;
+const STORE_VERSION = 23;
 const PERSIST_PATH = path.join(process.cwd(), ".host-store.json");
 const IS_VERCEL = process.env.VERCEL === "1" || Boolean(process.env.VERCEL);
 
@@ -76,6 +76,8 @@ export interface PersistedData {
   baselineDone: boolean;
   seenProjectIds: string[];
   seenUserIds: string[];
+  /** v23: approval request ids already turned into ApprovalItems (dedupe). */
+  approvalRequests: string[];
   approvals: ApprovalItem[];
   budgetBreached: Record<string, boolean>;
   emailDedupe: {
@@ -133,6 +135,7 @@ function freshData(): PersistedData {
     baselineDone: false,
     seenProjectIds: [],
     seenUserIds: [],
+    approvalRequests: [],
     approvals: [],
     budgetBreached: {},
     emailDedupe: { loginFeed: {}, welcomed: {}, budget: {} },
@@ -150,29 +153,98 @@ function freshData(): PersistedData {
 }
 
 function loadPersisted(): Partial<PersistedData> {
-  if (IS_VERCEL) return {}; // read-only FS — always start fresh
   try {
-    if (!fs.existsSync(PERSIST_PATH)) return {};
-    const raw = fs.readFileSync(PERSIST_PATH, "utf8");
-    const parsed = JSON.parse(raw) as { version?: number; data?: Partial<PersistedData> };
-    if (parsed.version !== STORE_VERSION || !parsed.data) return {};
-    return parsed.data;
+    if (fs.existsSync(PERSIST_PATH)) {
+      const raw = fs.readFileSync(PERSIST_PATH, "utf8");
+      const parsed = JSON.parse(raw) as { version?: number; data?: Partial<PersistedData> };
+      if (parsed.version === STORE_VERSION && parsed.data) return parsed.data;
+    }
   } catch {
-    return {}; // corrupt file → fresh start, never crash the server
+    // corrupt file → fresh start, never crash the server
   }
+  return {};
+}
+
+// ── v23: database persistence (survives serverless cold starts) ────────────
+
+const gwPersist = globalThis as unknown as { __hostStoreDbLoaded?: boolean; __hostStoreDbTimer?: ReturnType<typeof setTimeout> | null };
+
+async function loadFromDb(): Promise<Partial<PersistedData>> {
+  if (!process.env.DATABASE_URL || gwPersist.__hostStoreDbLoaded) return {};
+  gwPersist.__hostStoreDbLoaded = true;
+  try {
+    const prisma = await getHostPrisma();
+    const row = await prisma.hostState.findUnique({ where: { id: "singleton-embedded" } });
+    if (row?.stateJson) {
+      const parsed = JSON.parse(row.stateJson) as Partial<PersistedData>;
+      if (parsed && Array.isArray(parsed.approvals)) return parsed;
+    }
+  } catch {
+    /* database unavailable — file/memory mode */
+  }
+  return {};
+}
+
+/** One shared, lazily-created Prisma client for the host store. */
+interface HostPrismaShape {
+  hostState: {
+    findUnique: (args: unknown) => Promise<{ stateJson: string } | null>;
+    upsert: (args: unknown) => Promise<unknown>;
+  };
+  $disconnect?: () => Promise<void>;
+}
+
+async function getHostPrisma(): Promise<HostPrismaShape> {
+  const gwp = globalThis as unknown as { __hostPrisma?: HostPrismaShape };
+  if (gwp.__hostPrisma) return gwp.__hostPrisma;
+  const mod = (await import("@prisma/client")) as unknown as { PrismaClient: new () => unknown };
+  const prisma = new mod.PrismaClient() as HostPrismaShape;
+  gwp.__hostPrisma = prisma;
+  return prisma;
+}
+
+async function saveToDb(ctl: StoreController): Promise<void> {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    const prisma = await getHostPrisma();
+    await prisma.hostState.upsert({
+      where: { id: "singleton" },
+      update: { stateJson: JSON.stringify(ctl.data), updatedAt: new Date() },
+      create: { id: "singleton-embedded", stateJson: JSON.stringify(ctl.data) },
+    });
+  } catch {
+    /* best-effort — never crash a request */
+  }
+}
+
+function scheduleDbSave(ctl: StoreController): void {
+  if (!process.env.DATABASE_URL) return;
+  if (gwPersist.__hostStoreDbTimer) return;
+  gwPersist.__hostStoreDbTimer = setTimeout(() => {
+    gwPersist.__hostStoreDbTimer = null;
+    void saveToDb(ctl);
+  }, 1000);
 }
 
 const g = globalThis as unknown as { __projectassureHostStore?: StoreController };
 
 export function getStore(): StoreController {
   if (!g.__projectassureHostStore) {
-    g.__projectassureHostStore = {
+    const ctl: StoreController = {
       data: { ...freshData(), ...loadPersisted() },
       lockouts: {},
       loginAuditCount: 0,
       saveTimer: null,
       dirty: false,
     };
+    g.__projectassureHostStore = ctl;
+    // v23: hydrate from the database (async — the first poll serves file/
+    // memory data, then the DB overlay lands a moment later)
+    void loadFromDb().then(dbData => {
+      if (dbData && Object.keys(dbData).length) {
+        ctl.data = { ...ctl.data, ...dbData };
+      }
+    });
   }
   return g.__projectassureHostStore;
 }
@@ -180,9 +252,10 @@ export function getStore(): StoreController {
 // ── Persistence ─────────────────────────────────────────────────────────────
 
 export function scheduleSave(): void {
-  if (IS_VERCEL) return;
   const ctl = getStore();
   ctl.dirty = true;
+  scheduleDbSave(ctl);
+  if (IS_VERCEL) return; // read-only FS — DB persistence carries it instead
   if (ctl.saveTimer) return;
   ctl.saveTimer = setTimeout(() => {
     ctl.saveTimer = null;
@@ -201,8 +274,9 @@ export function scheduleSave(): void {
 }
 
 export function saveNow(): void {
-  if (IS_VERCEL) return;
   const ctl = getStore();
+  void saveToDb(ctl);
+  if (IS_VERCEL) return;
   if (ctl.saveTimer) {
     clearTimeout(ctl.saveTimer);
     ctl.saveTimer = null;

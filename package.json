@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
-    "postinstall": "prisma generate",
-    "db:push": "prisma db push --accept-data-loss",
+    "postinstall": "node scripts/pick-schema.mjs && prisma generate",
+    "db:push": "node scripts/pick-schema.mjs && prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset"

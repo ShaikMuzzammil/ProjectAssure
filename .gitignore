@@ -1,0 +1,37 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# builds
+.next/
+out/
+build/
+dist/
+
+# env
+.env
+.env*.local
+.env.production
+
+# local databases & stores
+prisma/db/*.db
+*.db-journal
+.sync-store.json
+.host-store.json
+
+# logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# generated prisma client cache
+generated/
+
+# next-env (regenerated)
+host-control/next-env.d.ts

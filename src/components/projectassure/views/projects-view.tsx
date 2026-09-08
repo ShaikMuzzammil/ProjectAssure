@@ -12,9 +12,10 @@ import { DEPARTMENTS, USERS } from "@/lib/projectassure/seed";
 import { toast } from "sonner";
 import {
   Search, SlidersHorizontal, X, Plus, FileDown, FileSpreadsheet, FileText, MapPin, LayoutList,
-  ChevronLeft, ChevronRight, Check, Sparkles, ArrowUpDown, Trash2, Pencil, FolderPlus, UploadCloud, Loader2,
+  ChevronLeft, ChevronRight, Check, Sparkles, ArrowUpDown, Trash2, Pencil, FolderPlus, UploadCloud, Loader2, ShieldAlert,
 } from "lucide-react";
 import { extractRawText, structureFields, makeDocument, fileKind } from "@/lib/projectassure/ocr";
+import { predictRiskFromInputs } from "@/lib/projectassure/risks";
 import { bytes as fmtBytes } from "@/lib/projectassure/format";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -466,6 +467,7 @@ function ProjectWizard({ open, onClose, departments, onCreate }: { open: boolean
   const user = useApp(s => s.user)!;
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
+  const [docText, setDocText] = useState("");   // v23: staged documents' text feeds the live risk preview
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<ProjectForm>({
@@ -476,6 +478,24 @@ function ProjectWizard({ open, onClose, departments, onCreate }: { open: boolean
     stage: "PLANNING",
   });
   const set = (patch: Partial<ProjectForm>) => setForm(f => ({ ...f, ...patch }));
+  // v23: LIVE input-driven risk preview — recomputes on every field change.
+  // Reacts to missing / unrealistic entries honestly (the user sees the risk
+  // move as they type) and scans staged document text for real risk language.
+  const riskPreview = useMemo(() => predictRiskFromInputs({
+    name: form.name,
+    sector: form.sector,
+    state: form.state,
+    district: form.district,
+    totalBudget: form.totalBudget,
+    durationMonths: form.durationMonths,
+    startDate: form.startDate,
+    targetDate: form.targetDate,
+    teamSize: form.teamSize,
+    contractor: form.contractor,
+    stage: form.stage ?? "PLANNING",
+    documentCount: files.length,
+    documentText: docText,
+  }), [form, files.length, docText]);
   // v3: honest per-step validation with specific messages (was a single silent boolean)
   const stepErrors: string[][] = [
     [
@@ -500,6 +520,12 @@ function ProjectWizard({ open, onClose, departments, onCreate }: { open: boolean
     const next = Array.from(list).filter(f => f.size <= 25 * 1024 * 1024);
     if (next.length < list.length) toast.error("Some files exceeded the 25 MB cap and were skipped");
     setFiles(prev => [...prev, ...next].slice(0, 12));
+    // v23: extract text from text-like files so the risk preview sees them
+    for (const f of next) {
+      if (/\.(txt|md|csv|json)$/i.test(f.name) && f.size < 512 * 1024) {
+        f.text().then(t => setDocText(prev => (prev + "\n" + t).slice(0, 60000))).catch(() => {});
+      }
+    }
   };
 
   return (
@@ -525,6 +551,43 @@ function ProjectWizard({ open, onClose, departments, onCreate }: { open: boolean
             {stepErrors[step].filter(Boolean)[0]}
           </div>
         )}
+
+        {/* v23: LIVE risk meter — visible on every wizard step, recomputes as
+            you type. This is the risk-management core: inputs drive risk. */}
+        <div className="rounded-xl border bg-muted/30 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className={cn("h-4 w-4", riskPreview.riskLevel === "CRITICAL" || riskPreview.riskLevel === "HIGH" ? "text-rose-600" : riskPreview.riskLevel === "MEDIUM" ? "text-amber-600" : "text-emerald-600")} />
+              <span className="text-[12px] font-bold">Live risk preview</span>
+              <span className="text-[9.5px] font-medium text-muted-foreground">· updates with every field</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                <div className={cn("h-full rounded-full transition-all duration-300",
+                  riskPreview.overallRisk > 70 ? "bg-rose-500" : riskPreview.overallRisk > 45 ? "bg-amber-500" : riskPreview.overallRisk > 25 ? "bg-amber-400" : "bg-emerald-500")}
+                  style={{ width: `${riskPreview.overallRisk}%` }} />
+              </div>
+              <span className={cn("text-[13px] font-extrabold tabular",
+                riskPreview.overallRisk > 70 ? "text-rose-600" : riskPreview.overallRisk > 45 ? "text-amber-600" : riskPreview.overallRisk > 25 ? "text-amber-600" : "text-emerald-600")}>
+                {riskPreview.overallRisk}
+              </span>
+              <span className={cn("rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase",
+                riskPreview.riskLevel === "CRITICAL" ? "bg-rose-500/15 text-rose-600" : riskPreview.riskLevel === "HIGH" ? "bg-rose-500/10 text-rose-600" : riskPreview.riskLevel === "MEDIUM" ? "bg-amber-500/15 text-amber-700" : "bg-emerald-500/15 text-emerald-600")}>
+                {riskPreview.riskLevel}
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+            <span>Schedule {riskPreview.scheduleRisk}</span>
+            <span>Budget {riskPreview.budgetRisk}</span>
+            <span>Resources {riskPreview.resourceRisk}</span>
+            <span>Data completeness {riskPreview.completeness}%</span>
+            <span className="font-semibold text-foreground/70">{riskPreview.risks.length} signal{riskPreview.risks.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="mt-1.5 text-[10.5px] leading-snug text-muted-foreground">
+            <span className="font-semibold text-foreground/80">Top action:</span> {riskPreview.topFix}
+          </div>
+        </div>
         <div className="min-h-[240px] space-y-3.5 py-2">
           {step === 0 && (<>
             <div><Label className="text-[11.5px]">Project name *</Label><Input value={form.name} onChange={e => set({ name: e.target.value })} placeholder="e.g., Coastal Ring Road, Vizag (Package-3)" className="text-[13px]" /></div>
@@ -661,8 +724,25 @@ function ProjectWizard({ open, onClose, departments, onCreate }: { open: boolean
                 </div>
               )}
               <div className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-                On create: the project enters PLANNING with health 95, starter milestones + dependency-chained tasks, empty budget (first sync posts lines), full audit trail from the CREATE entry, and any uploaded documents are immediately ingested — every subsequent mutation recomputes the 18-signal health engine live. The project is owned by your account ({user.email}) and stays in your workspace.
+                On create: monitoring, prediction and the risk register activate automatically, and any uploaded documents are ingested immediately — every subsequent mutation recomputes the 18-signal health engine live. The project is owned by your account ({user.email}), stays in your workspace, and an activation approval request goes to Host Control in real time.
               </div>
+              {/* v23: full preview risk list on the review step */}
+              {riskPreview.risks.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Risk signals detected from your inputs</div>
+                  {riskPreview.risks.slice(0, 6).map(r => (
+                    <div key={r.title} className="flex items-start gap-2 rounded-lg border px-2.5 py-1.5">
+                      <span className={cn("mt-0.5 rounded px-1.5 py-0.5 text-[9px] font-bold",
+                        r.severity === "CRITICAL" ? "bg-rose-500/15 text-rose-600" : r.severity === "HIGH" ? "bg-rose-500/10 text-rose-600" : r.severity === "MEDIUM" ? "bg-amber-500/15 text-amber-700" : "bg-emerald-500/15 text-emerald-600")}>{r.severity}</span>
+                      <div className="min-w-0">
+                        <div className="text-[11.5px] font-semibold">{r.title}</div>
+                        <div className="text-[10.5px] leading-snug text-muted-foreground">{r.why}</div>
+                        <div className="mt-0.5 text-[10.5px] leading-snug text-[#0284c7]">Fix: {r.fix}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>)}
         </div>

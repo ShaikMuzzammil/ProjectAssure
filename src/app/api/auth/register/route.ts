@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { randomBytes, scryptSync } from "crypto";
+import { createStateToken } from "@/lib/server-auth";
 
-// POST /api/auth/register — real account creation (connected mode).
-// The client store always registers locally first (simulation mode keeps the
-// demo self-contained); this route mirrors the account into PostgreSQL when
-// DATABASE_URL points at Neon, with an scrypt hash — the plaintext password is
-// never stored anywhere, only used to derive the salted hash. A successful
-// mirror lets other devices and the 3 Vercel domains see the same account.
+// POST /api/auth/register — universal account creation.
+// With DATABASE_URL: the account is created in the cloud database (scrypt
+// hash), an isolated UserState workspace row is prepared and a state token
+// is issued so every subsequent workspace save is per-user and private.
+// Without DATABASE_URL: 503 SIMULATION_MODE — the browser store stands alone.
 
 const ALLOWED_ROLES = new Set(["PROJECT_MANAGER", "STAKEHOLDER", "VIEWER"]); // ADMIN is never self-assignable
 
@@ -60,9 +60,17 @@ export async function POST(req: Request) {
       data: { action: "CREATE", entity: "User", entityId: user.id, details: `Self-registration: ${email} as ${role} (scrypt-hashed, secure cloud database)` },
     }).catch(() => { /* best-effort */ });
 
+    // prepare the user's isolated workspace record (empty world)
+    await db.userState.upsert({
+      where: { userId: user.id },
+      update: { email },
+      create: { userId: user.id, email, snapshotJson: JSON.stringify({ version: 1, projects: [], notifications: [], emails: [], interventions: [] }) },
+    }).catch(() => { /* best-effort */ });
+
     return NextResponse.json({
       ok: true, mirrored: true,
       user: { id: user.id, name, email, role },
+      stateToken: createStateToken(user.id, email),
       security: { hash: "scrypt (N=16384, r=8, p=1, 64-byte)", stored: "secure cloud database", plaintext: "never" },
     }, { status: 201 });
   } catch (err) {

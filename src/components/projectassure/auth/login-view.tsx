@@ -3,19 +3,15 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useApp, type SignUpForm } from "@/store/app-store";
-import { USERS, DEPARTMENTS } from "@/lib/projectassure/seed";
+import { DEPARTMENTS } from "@/lib/projectassure/seed";
 import { passwordStrength } from "@/lib/projectassure/auth-crypto";
 import {
-  ShieldAlert, ArrowLeft, ArrowRight, Loader2, KeyRound, Check, UserPlus, LogIn, Lock, Mail,
-  User as UserIcon, Building2, ShieldCheck, Landmark, ClipboardList, LineChart, Eye,
+  ShieldAlert, ArrowLeft, ArrowRight, Loader2, KeyRound, UserPlus, Lock, Mail,
+  User as UserIcon, Building2, ShieldCheck, Eye, Sparkles, Radar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import GovHeader from "../shared/gov-header";
-
-const ROLE_ICON: Record<string, React.ElementType> = {
-  ADMIN: Landmark, PROJECT_MANAGER: ClipboardList, STAKEHOLDER: LineChart, VIEWER: Eye,
-};
 
 const SIGNUP_ROLES: { value: SignUpForm["role"]; title: string; blurb: string }[] = [
   { value: "PROJECT_MANAGER", title: "Project Manager", blurb: "Create & run your own projects" },
@@ -23,18 +19,19 @@ const SIGNUP_ROLES: { value: SignUpForm["role"]; title: string; blurb: string }[
   { value: "VIEWER", title: "Observer", blurb: "Read-only briefing view" },
 ];
 
+const FEATURES = [
+  { icon: Radar, title: "Delay prediction", text: "18-signal model flags risk 30–60 days before a slip." },
+  { icon: Eye, title: "Document intelligence", text: "Upload field reports — fields and risks are extracted automatically." },
+  { icon: Sparkles, title: "Live approvals", text: "Every project, evidence file and document is reviewed in real time." },
+];
+
 export default function LoginView() {
   const login = useApp(s => s.login);
   const signUp = useApp(s => s.signUp);
   const goPage = useApp(s => s.goPage);
   const [tab, setTab] = useState<"signin" | "signup">("signin");
-  const [persona, setPersona] = useState(USERS[0]);
-  const [email, setEmail] = useState(USERS[0].email);
-  const [password, setPassword] = useState(USERS[0].password);
-
-  const pick = (u: typeof USERS[0]) => {
-    setPersona(u); setEmail(u.email); setPassword(u.password); setTab("signin");
-  };
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950">
@@ -121,34 +118,24 @@ export default function LoginView() {
             recommends the next best action — on free-tier infrastructure at <strong className="font-semibold text-amber-200">₹0 running cost</strong>.
           </p>
 
-          {/* personas — exactly one demo per role type */}
-          <div className="relative z-10 mt-7">
-            <div className="mb-2.5 flex items-center justify-between">
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">Choose a demo persona — 4 roles</div>
-              <button onClick={() => goPage("demo")} className="text-[10px] font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 hover:text-sky-200">full demo page →</button>
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              {USERS.map(u => {
-                const Icon = ROLE_ICON[u.role] ?? ClipboardList;
-                const active = persona.id === u.id;
-                return (
-                  <button key={u.id} type="button" onClick={() => pick(u)}
-                    className={cn("rounded-xl border p-3 text-left transition",
-                      active ? "border-amber-300/60 bg-white/15 shadow-lg shadow-black/20 ring-1 ring-amber-200/20" : "border-white/10 bg-white/[0.06] hover:border-white/20 hover:bg-white/10")}>
-                    <div className="flex items-center gap-2">
-                      <Icon className={cn("h-4 w-4 shrink-0", active ? "text-amber-200" : "text-sky-200/80")} />
-                      {active && <Check className="ml-auto h-3.5 w-3.5 text-amber-200" />}
-                    </div>
-                    <div className="mt-1.5 truncate text-[12px] font-bold leading-tight text-white">{u.persona}</div>
-                    <div className="truncate text-[10px] text-white/50">{u.designation}</div>
-                    <div className="mt-1 font-mono text-[9px] uppercase tracking-wider text-white/35">{u.role.replace("_", " ")}</div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-2 text-[10.5px] text-white/45">
-              Pick a role to prefill the sign-in card — every persona sees a different, correctly-scoped workspace.
-            </div>
+          {/* v23: clean universal login — no demo personas here. Feature list instead. */}
+          <div className="relative z-10 mt-7 space-y-2.5">
+            {FEATURES.map(f => (
+              <div key={f.title} className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.06] p-3">
+                <f.icon className="mt-0.5 h-4 w-4 shrink-0 text-sky-200" />
+                <div>
+                  <div className="text-[12px] font-bold leading-tight text-white">{f.title}</div>
+                  <div className="mt-0.5 text-[10.5px] leading-snug text-white/55">{f.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="relative z-10 mt-6">
+            <button onClick={() => goPage("demo")}
+              className="text-[11px] font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 transition hover:text-sky-200">
+              Explore the guided demo →
+            </button>
           </div>
 
           <div className="relative z-10 mt-auto pt-6 text-[10px] text-white/35">
@@ -158,24 +145,13 @@ export default function LoginView() {
 
         {/* ─── RIGHT — the white sign-in / create-account card ─── */}
         <div className="w-full">
-          {/* mobile persona chips (lg:hidden) */}
-          <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
-            {USERS.map(u => (
-              <button key={u.id} type="button" onClick={() => pick(u)}
-                className={cn("shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition",
-                  persona.id === u.id ? "border-[#0a3252] bg-[#0a3252] text-white" : "border-slate-300 bg-white text-slate-600")}>
-                {u.persona}
-              </button>
-            ))}
-          </div>
-
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
             className="rounded-2xl border border-slate-200/80 bg-card p-7 shadow-2xl shadow-slate-300/50 dark:border-slate-800 dark:shadow-black/40">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0c93e7]">Smart India Hackathon 2026 · SIH26103</div>
             <h2 className="text-[19px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : "Create your account"}</h2>
             <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
               {tab === "signin"
-                ? "Secure access. Pick a persona on the left, or sign in with your registered email."
+                ? "Sign in with your registered email — your workspace follows your account."
                 : "Your own workspace — projects, documents, predictions and exports, stored per user."}
             </p>
 
@@ -183,7 +159,7 @@ export default function LoginView() {
               {tab === "signin"
                 ? <motion.div key="signin" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} transition={{ duration: 0.16 }}>
                   <SignInPanel login={login} email={email} password={password} setEmail={setEmail} setPassword={setPassword}
-                    persona={persona} switchToSignUp={() => setTab("signup")} goPage={goPage} />
+                    switchToSignUp={() => setTab("signup")} goPage={goPage} />
                 </motion.div>
                 : <motion.div key="signup" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
                   <SignUpPanel signUp={signUp} switchToSignIn={() => setTab("signin")} />
@@ -201,11 +177,11 @@ export default function LoginView() {
   );
 }
 
-// ─── Sign in (persona prefill + registered accounts) ───────────────────────
-function SignInPanel({ login, email, password, setEmail, setPassword, persona, switchToSignUp, goPage }: {
+// ─── Sign in (registered accounts — clean, no persona prefill) ─────────────
+function SignInPanel({ login, email, password, setEmail, setPassword, switchToSignUp, goPage }: {
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string; user?: { name: string; role: string } }>;
   email: string; password: string; setEmail: (v: string) => void; setPassword: (v: string) => void;
-  persona: typeof USERS[0]; switchToSignUp: () => void; goPage: (p: "landing") => void;
+  switchToSignUp: () => void; goPage: (p: "landing") => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -216,27 +192,17 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
     setBusy(true); setError(null);
     const res = await login(email, password);
     if (!res.ok) { setError(res.error ?? "Sign-in failed"); setBusy(false); return; }
-    toast.success(`Welcome back, ${res.user?.name.split(" ")[0]}`, { description: `${res.user?.role} session · your workspace is ready` });
+    toast.success(`Welcome back, ${res.user?.name.split(" ")[0]}`, { description: "Your workspace is ready" });
   };
 
   return (
     <div>
-      {persona && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-[#e0effe]/70 px-3 py-2 dark:bg-[#0c93e7]/10">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#0b426e] to-[#0c93e7] text-[10px] font-bold text-white">{persona.avatarInitials}</div>
-          <div className="min-w-0 text-[11px] leading-tight">
-            <div className="font-semibold">Demo: {persona.persona}</div>
-            <div className="truncate text-muted-foreground">password &quot;{persona.password}&quot; prefilled · any persona works</div>
-          </div>
-        </div>
-      )}
-
       <form onSubmit={submit} className="space-y-3.5">
         <div>
           <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Official email</label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input value={email} onChange={e => setEmail(e.target.value)} type="email" required placeholder="you@mospi.gov.in"
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email" required placeholder="you@organisation.gov.in" autoComplete="username"
               className="h-10.5 w-full rounded-lg border bg-background pl-9 text-[13px] outline-none transition focus:border-[#0c93e7] focus:ring-2 focus:ring-[#0c93e7]/20" />
           </div>
         </div>
@@ -261,7 +227,7 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
           <UserPlus className="h-4 w-4 text-[#0c93e7]" /> Create a new account (free)
         </button>
         <div className="flex items-center justify-between text-[10.5px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-emerald-600" />Securely encrypted passwords</span>
+          <span className="inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3 text-emerald-600" />Passwords encrypted end-to-end</span>
           <button type="button" onClick={() => goPage("landing")} className="font-medium hover:text-foreground">← Back</button>
         </div>
       </form>

@@ -2,20 +2,21 @@
 
 // Projects Control — every project from the live snapshot: health bands,
 // budgets (₹Cr), progress, delay risk, milestones. Row → detail drawer
-// (basic info + alerts + event trend). CSV export of the REAL mirror.
+// (approval state + basic info + alerts + event trend). CSV export of the
+// REAL mirror.
 
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Download, FolderKanban, MapPin, Search, X } from "lucide-react";
+import { CheckCircle2, Download, FolderKanban, Loader2, MapPin, Search, ShieldCheck, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Card, EmptyState, Input, PageIntro, Progress, Select, severityTone } from "./ui";
+import { Badge, Button, Card, EmptyState, Input, PageIntro, Progress, Select, Textarea, severityTone } from "./ui";
 import { fmtDateTime, healthBand, relTime } from "@/lib/host/format";
-import type { SyncProject } from "@/lib/host/types";
+import type { ApprovalItem, SyncProject } from "@/lib/host/types";
 import type { ViewProps } from "./view-props";
 
 type SortKey = "name" | "health" | "progress" | "delayRisk" | "budgetTotalCr" | "budgetSpentCr" | "lastActivityAt";
 
-export function ProjectsView({ state }: ViewProps) {
+export function ProjectsView({ state, refresh }: ViewProps) {
   const [query, setQuery] = useState("");
   const [band, setBand] = useState("all");
   const [dept, setDept] = useState("all");
@@ -23,6 +24,9 @@ export function ProjectsView({ state }: ViewProps) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selected, setSelected] = useState<SyncProject | null>(null);
   const [exporting, setExporting] = useState(false);
+  // v23: approval decisions made straight from the project drawer
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [decisionNote, setDecisionNote] = useState("");
 
   const depts = useMemo(() => Array.from(new Set(state.mirror.projects.map((p) => p.department))).sort(), [state.mirror.projects]);
 
@@ -86,6 +90,43 @@ export function ProjectsView({ state }: ViewProps) {
     [selected, state.mirror.projects],
   );
 
+  // v23: approvals linked to the selected project (activation / docs / evidence / AI)
+  const projectApprovals = useMemo(
+    () => (liveProject ? state.approvals.filter((a) => a.subjectId === liveProject.id) : []),
+    [liveProject, state.approvals],
+  );
+  const pendingApprovals = projectApprovals.filter((a) => a.status === "pending");
+
+  async function decide(itemId: string, decision: "approve" | "reject") {
+    if (decidingId) return;
+    if (decision === "reject" && !decisionNote.trim()) {
+      toast.error("Add a short note", { description: "A rejection should tell the owner why." });
+      return;
+    }
+    setDecidingId(itemId);
+    try {
+      const res = await fetch("/api/admin/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, decision, note: decisionNote.trim() || undefined }),
+      });
+      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; notified?: boolean; note?: string };
+      if (res.ok && d.ok) {
+        toast.success(decision === "approve" ? "Approved" : "Rejected", {
+          description: d.notified ? "The owner has been notified in their app — the state updates there within seconds." : (d.note ?? "Decision recorded."),
+        });
+        setDecisionNote("");
+        await refresh(true);
+      } else {
+        toast.error("Decision failed", { description: d.error ?? `HTTP ${res.status}` });
+      }
+    } catch (e) {
+      toast.error("Decision failed", { description: (e as Error).message });
+    } finally {
+      setDecidingId(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageIntro
@@ -132,7 +173,7 @@ export function ProjectsView({ state }: ViewProps) {
           </div>
         ) : (
           <div className="host-scroll overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-xs">
+            <table className="w-full min-w-[1040px] text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <Th onClick={() => toggleSort("name")}>Project</Th>
@@ -144,6 +185,7 @@ export function ProjectsView({ state }: ViewProps) {
                   <Th onClick={() => toggleSort("budgetTotalCr")}>Budget ₹Cr</Th>
                   <Th onClick={() => toggleSort("budgetSpentCr")}>Spent ₹Cr</Th>
                   <Th className="hidden lg:table-cell">Milestones</Th>
+                  <Th>Approval</Th>
                   <Th className="hidden lg:table-cell" onClick={() => toggleSort("lastActivityAt")}>Last activity</Th>
                 </tr>
               </thead>
@@ -195,6 +237,12 @@ export function ProjectsView({ state }: ViewProps) {
                         {p.milestonesCompleted}/{p.milestonesTotal}
                         {p.milestonesDelayed > 0 ? <span className="ml-1 text-[10px] font-bold text-amber-600">({p.milestonesDelayed} late)</span> : null}
                       </td>
+                      <td className="px-3 py-3">
+                        {p.approvalStatus === "pending" ? <Badge tone="amber">pending</Badge>
+                          : p.approvalStatus === "approved" ? <Badge tone="green">approved</Badge>
+                          : p.approvalStatus === "rejected" ? <Badge tone="red">rejected</Badge>
+                          : <Badge tone="slate">active</Badge>}
+                      </td>
                       <td className="hidden px-3 py-3 text-slate-500 dark:text-slate-400 lg:table-cell">
                         {p.lastActivityAt ? relTime(p.lastActivityAt) : "—"}
                       </td>
@@ -241,6 +289,74 @@ export function ProjectsView({ state }: ViewProps) {
               </div>
 
               <div className="host-scroll min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+                {/* v23: approval state + decide actions — the core control */}
+                <Card>
+                  <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      <ShieldCheck className="h-4 w-4 text-[#0c93e7]" aria-hidden /> Approvals & control
+                      {pendingApprovals.length > 0 ? <Badge tone="amber">{pendingApprovals.length} pending</Badge> : null}
+                    </h3>
+                  </div>
+                  <div className="space-y-3 px-5 py-4">
+                    {/* current activation state */}
+                    <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Monitoring status</p>
+                        <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                          {liveProject.approvalStatus === "approved" ? "Approved — monitoring active"
+                            : liveProject.approvalStatus === "rejected" ? "Rejected — monitoring paused"
+                            : liveProject.approvalStatus === "pending" ? "Pending host review"
+                            : "Active (mirrored project)"}
+                        </p>
+                      </div>
+                      <Badge tone={liveProject.approvalStatus === "approved" ? "green" : liveProject.approvalStatus === "rejected" ? "red" : liveProject.approvalStatus === "pending" ? "amber" : "slate"}>
+                        {liveProject.approvalStatus ?? "active"}
+                      </Badge>
+                    </div>
+
+                    {projectApprovals.length === 0 ? (
+                      <p className="px-1 text-xs text-slate-400">No approval items for this project. New projects, documents, evidence and intelligence requests raised by the owner appear here in real time.</p>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {projectApprovals.slice(0, 8).map((a) => (
+                          <div key={a.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">{a.title}</p>
+                                <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{a.description}</p>
+                              </div>
+                              <Badge tone={a.status === "approved" ? "green" : a.status === "rejected" ? "red" : "amber"}>{a.status}</Badge>
+                            </div>
+                            {a.status === "pending" ? (
+                              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                <Button size="sm" variant="navy" loading={decidingId === a.id} onClick={() => void decide(a.id, "approve")}>
+                                  <CheckCircle2 className="h-3.5 w-3.5" /> Approve & notify owner
+                                </Button>
+                                <Button size="sm" variant="outline" loading={decidingId === a.id} onClick={() => void decide(a.id, "reject")}>
+                                  <XCircle className="h-3.5 w-3.5" /> Reject
+                                </Button>
+                                {a.decidedAt ? null : <span className="text-[10px] text-slate-400">raised {relTime(a.createdAt)}</span>}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-[10px] text-slate-400">
+                                {a.status} by {a.decidedBy ?? "—"} · {a.decidedAt ? fmtDateTime(a.decidedAt) : ""}{a.note ? ` · “${a.note.slice(0, 90)}”` : ""}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* shared decision note */}
+                    {pendingApprovals.length > 0 ? (
+                      <div>
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Decision note (sent to the owner)</p>
+                        <Textarea value={decisionNote} onChange={(e) => setDecisionNote(e.target.value)} placeholder="Optional for approvals · required for rejections — e.g. “Approved, milestone plan looks realistic.”" rows={2} />
+                      </div>
+                    ) : null}
+                  </div>
+                </Card>
+
                 {/* basic info */}
                 <Card>
                   <div className="border-b border-slate-100 px-5 py-3 dark:border-slate-800">
@@ -264,6 +380,8 @@ export function ProjectsView({ state }: ViewProps) {
                       }
                     />
                     <Stat term="Milestones" def={`${liveProject.milestonesCompleted}/${liveProject.milestonesTotal} done · ${liveProject.milestonesDelayed} delayed`} />
+                    <Stat term="Documents" def={`${liveProject.documentsTotal ?? 0} uploaded`} />
+                    <Stat term="Site evidence" def={`${liveProject.evidenceTotal ?? 0} submitted`} />
                     <Stat term="Owner" def={liveProject.ownerName} />
                     <Stat term="Last activity" def={liveProject.lastActivityAt ? fmtDateTime(liveProject.lastActivityAt) : "—"} />
                   </dl>

@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, 
 import { useApp } from "@/store/app-store";
 import { SectionTitle, HealthBadge, SECTOR_COLORS, CHART_COLORS, EmptyState } from "../shared/ui-bits";
 import { inr, shortDate, monthLabel } from "@/lib/projectassure/format";
-import { buildReport, downloadPdf, downloadExcel, downloadCsv, projectsToRows, reportFileName, REPORT_KINDS } from "@/lib/projectassure/reports";
+import { buildReport, downloadPdf, downloadExcel, downloadCsv, projectsToRows, reportFileName, REPORT_KINDS , buildPdfBase64 } from "@/lib/projectassure/reports";
 import type { ReportKind } from "@/lib/projectassure/types";
 import { can } from "@/lib/projectassure/permissions";
 import { toast } from "sonner";
@@ -76,8 +76,17 @@ export default function AnalyticsView() {
     setEmailDlg(null);
     const scopeP = kind === "project-status" ? projects.find(p => p.healthStatus !== "HEALTHY") ?? projects[0] : undefined;
     const fn = reportFileName(kind, scopeP);
-    const msg = await queueEmail({ to: user.email, toName: user.name, template: "report_delivery", reportName: `${fn}.pdf`, project: scopeP, projectId: scopeP?.id, attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb: 312 }], send: true });
-    toast.success(msg.status === "SENT" ? "Report emailed via email service" : "Report queued to the demo outbox", { description: `To: ${msg.to} · preview in the Email Centre` });
+    // v23 fix: build the REAL PDF and attach it (was metadata-only before)
+    const doc = buildReport(kind, projects, stats, user, scopeP);
+    const base64 = await buildPdfBase64(doc);
+    const sizeKb = Math.max(1, Math.round((base64.length * 3) / 4 / 1024));
+    const msg = await queueEmail({
+      to: user.email, toName: user.name, template: "report_delivery",
+      reportName: `${fn}.pdf`, project: scopeP, projectId: scopeP?.id,
+      attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb }],
+      attachmentBase64: base64, send: true,
+    });
+    toast.success(msg.status === "SENT" ? "Emailed with the PDF attached" : "Queued to the demo outbox (attachment ready)", { description: `To ${msg.to} · ${fn}.pdf (${sizeKb} KB)` });
     navigate("email-center");
   };
 

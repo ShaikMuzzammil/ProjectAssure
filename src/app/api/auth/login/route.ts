@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { createStateToken } from "@/lib/server-auth";
 
-// POST /api/auth/login — live-database authentication (connected mode).
-// Demo/simulation mode never calls this; the client store validates personas
-// locally. When DATABASE_URL points at Neon (prod) this route does the real
-// bcrypt-grade flow: scrypt verify + audit row + JWT-ready session claims.
+// POST /api/auth/login — database-backed authentication (universal mode).
+// Verifies the scrypt hash, updates lastLoginAt and returns the user profile
+// plus a state token used for per-user workspace hydration/saving via
+// /api/user-state. Demo personas never hit this route (client-side check).
 
 function hashPassword(password: string): { salt: string; hash: string } {
   const salt = randomBytes(16).toString("hex");
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
 
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await db.auditLog.create({
-      data: { action: "LOGIN", entity: "Session", details: `SSO login for ${user.email} (${user.role}) · 3-domain JWT handoff`, userId: user.id },
+      data: { action: "LOGIN", entity: "Session", details: `Login for ${user.email} (${user.role}) — per-user workspace hydrated from the cloud database`, userId: user.id },
     }).catch(() => { /* audit write is best-effort in dev */ });
 
     return NextResponse.json({
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
         department: user.department?.code ?? null, designation: user.designation,
         avatarInitials: user.avatarInitials ?? user.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
       },
-      session: { alg: "HS256", ttlHours: 24, domains: ["main", "analytics", "ai"] },
+      stateToken: createStateToken(user.id, user.email),
     });
   } catch (err) {
     return NextResponse.json({ error: "DB_UNAVAILABLE", message: (err as Error).message.slice(0, 160) }, { status: 503 });

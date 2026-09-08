@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireHost } from "@/lib/host/auth";
 import { audit, getStore, nowIso, saveNow } from "@/lib/host/store";
 import { postCommandToMain } from "@/lib/host/sync";
+import type { ApprovalItem } from "@/lib/host/types";
 
 export const dynamic = "force-dynamic";
 
@@ -39,15 +40,21 @@ export async function POST(req: Request) {
   item.note = note;
 
   let notifyOutcome: { ok: boolean; note: string } = { ok: false, note: "no user to notify" };
-  if (decision === "approve") {
-    // real integration: user-alert webhook to the owner / the new account
+  // v23: the decision flows back to the requester as a REAL project-state
+  // update command — the main app applies it within seconds and the user
+  // sees the approved/rejected state on their project + evidence + docs.
+  if (decision === "approve" || decision === "reject") {
     const target = item.kind === "account-access" ? item.subjectId : item.ownerId;
+    const isProjectScoped = ["project-activation", "document-review", "evidence-verification", "ai-request", "budget-escalation"].includes(item.kind);
     if (target) {
+      const kindByDecision = commandKindFor(item.kind, decision === "approve");
       notifyOutcome = await postCommandToMain({
-        kind: "user-alert",
-        title: approvalNotifyTitle(item.kind),
-        message: approvalNotifyMessage(item),
-        severity: item.severity,
+        kind: kindByDecision,
+        title: approvalNotifyTitle(item.kind, decision === "approve"),
+        message: approvalNotifyMessage(item, decision === "approve"),
+        severity: decision === "approve" ? item.severity : "warning",
+        linkView: isProjectScoped ? "project-detail" : "alerts",
+        linkProjectId: isProjectScoped ? item.subjectId : undefined,
         audience: target,
         createdBy: `host:${actor}`,
       });
@@ -70,28 +77,61 @@ export async function POST(req: Request) {
   });
 }
 
-function approvalNotifyTitle(kind: string): string {
+function commandKindFor(kind: ApprovalItem["kind"], approve: boolean): "user-alert" | "project-approved" | "project-rejected" | "document-reviewed" | "evidence-reviewed" | "ai-request-resolved" {
   switch (kind) {
     case "project-activation":
-      return "Monitoring activated — Host Control";
-    case "account-access":
-      return "Account access confirmed — Host Control";
+      return approve ? "project-approved" : "project-rejected";
+    case "document-review":
+      return "document-reviewed";
+    case "evidence-verification":
+      return "evidence-reviewed";
+    case "ai-request":
+      return "ai-request-resolved";
     case "budget-escalation":
-      return "Budget escalation approved — Host Control";
+      return approve ? "project-approved" : "project-rejected";
+    default:
+      return "user-alert";
+  }
+}
+
+function approvalNotifyTitle(kind: string, approve: boolean): string {
+  const s = approve ? "approved" : "rejected";
+  switch (kind) {
+    case "project-activation":
+      return approve ? "Monitoring activated — Host Control" : "Project activation rejected — Host Control";
+    case "account-access":
+      return approve ? "Account access confirmed — Host Control" : "Account access rejected — Host Control";
+    case "budget-escalation":
+      return `Budget escalation ${s} — Host Control`;
+    case "document-review":
+      return `Document submission ${s} — Host Control`;
+    case "evidence-verification":
+      return `Site evidence ${s} — Host Control`;
+    case "ai-request":
+      return `Intelligence request ${s} — Host Control`;
     default:
       return "Host Control decision";
   }
 }
 
-function approvalNotifyMessage(item: { kind: string; title: string; subjectLabel: string; note?: string }): string {
+function approvalNotifyMessage(item: { kind: string; title: string; subjectLabel: string; note?: string }, approve: boolean): string {
   const noteLine = item.note ? `\nAdministrator note: ${item.note}` : "";
+  const outcome = approve ? "approved" : "rejected";
   switch (item.kind) {
     case "project-activation":
-      return `Your project ${item.subjectLabel} has been approved for active monitoring by the Central Programme Office. Portfolio dashboards, alerts and milestone tracking are now live for it.${noteLine}`;
+      return approve
+        ? `Your project ${item.subjectLabel} has been approved for active monitoring by the Central Programme Office. Portfolio dashboards, alerts and milestone tracking are now live for it.${noteLine}`
+        : `Your project ${item.subjectLabel} was not approved by the Central Programme Office. It remains in your workspace with monitoring paused — see the administrator note and resubmit when ready.${noteLine}`;
     case "account-access":
-      return `Your ProjectAssure account access has been confirmed by the Central Programme Office. You retain full platform access.${noteLine}`;
+      return `Your ProjectAssure account access has been ${outcome} by the Central Programme Office.${noteLine}`;
     case "budget-escalation":
-      return `The budget escalation for ${item.subjectLabel} was approved by the Central Programme Office. Please upload a variance note and revised cash-flow to the project dossier.${noteLine}`;
+      return `The budget escalation for ${item.subjectLabel} was ${outcome} by the Central Programme Office.${noteLine}`;
+    case "document-review":
+      return `Your document submission for ${item.subjectLabel} was ${outcome} by the Central Programme Office.${noteLine}`;
+    case "evidence-verification":
+      return `The site evidence for ${item.subjectLabel} was ${outcome} by the Central Programme Office.${noteLine}`;
+    case "ai-request":
+      return `Your intelligence request (${item.subjectLabel}) was ${outcome} by the Central Programme Office.${noteLine}`;
     default:
       return `Host Control decision on ${item.subjectLabel}.${noteLine}`;
   }

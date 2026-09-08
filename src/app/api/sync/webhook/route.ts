@@ -21,7 +21,8 @@ export async function POST(req: NextRequest) {
     }
     const body = await req.json();
     const kindRaw = String(body.kind || "broadcast");
-    const allowed = ["broadcast", "user-alert", "request-sync", "announce", "host-message"] as const;
+    const allowed = ["broadcast", "user-alert", "request-sync", "announce", "host-message",
+      "project-approved", "project-rejected", "document-reviewed", "evidence-reviewed", "ai-request-resolved"] as const;
     const kind = (allowed as readonly string[]).includes(kindRaw)
       ? (kindRaw as (typeof allowed)[number])
       : "broadcast";
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
       message: String(body.message || "").slice(0, 4000),
       severity,
       linkView: body.linkView ? String(body.linkView).slice(0, 60) : undefined,
+      linkProjectId: body.linkProjectId ? String(body.linkProjectId).slice(0, 60) : undefined,
       audience: body.audience ? String(body.audience) : "all",
       createdBy: String(body.createdBy || "Host Control").slice(0, 120),
     });

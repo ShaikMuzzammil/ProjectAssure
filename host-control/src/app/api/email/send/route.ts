@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   if (!gate.ok) return gate.res;
   const actor = gate.email;
 
-  let payload: { to?: string; subject?: string; body?: string; template?: string };
+  let payload: { to?: string; subject?: string; body?: string; template?: string; attachments?: { filename?: string; contentType?: string; base64?: string }[] };
   try {
     payload = await req.json();
   } catch {
@@ -27,12 +27,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "to_and_subject_required" }, { status: 422 });
   }
 
-  const entry = await sendHostEmail({ to, subject, body: body || "(no body)", kind: "manual", template: payload.template });
+  // v23: attachments (base64) ride with the mail through every provider
+  const attachments = (payload.attachments ?? [])
+    .filter(a => a && a.filename && a.base64 && typeof a.base64 === "string" && a.base64.length < 6 * 1024 * 1024)
+    .slice(0, 5)
+    .map(a => ({ filename: String(a.filename).slice(0, 120), contentType: String(a.contentType ?? "application/octet-stream"), base64: String(a.base64) }));
+
+  const entry = await sendHostEmail({ to, subject, body: body || "(no body)", kind: "manual", template: payload.template, attachments: attachments.length ? attachments : undefined });
 
   audit(
     entry.status === "SENT" ? "email.sent" : entry.status === "SIMULATED" ? "email.simulated" : "email.failed",
     actor,
-    `manual email to ${to} “${subject}” — ${entry.status} via ${entry.provider}${entry.reason ? ` (${entry.reason.slice(0, 120)})` : ""}`,
+    `manual email to ${to} “${subject}” — ${entry.status} via ${entry.provider}${attachments.length ? ` · ${attachments.length} attachment(s)` : ""}${entry.reason ? ` (${entry.reason.slice(0, 120)})` : ""}`,
     entry.status === "FAILED" ? "warning" : "info",
   );
 

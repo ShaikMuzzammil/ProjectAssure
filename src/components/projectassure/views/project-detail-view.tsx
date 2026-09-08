@@ -15,7 +15,7 @@ import GanttTimeline from "../shared/gantt";
 import DocPipeline from "../shared/doc-pipeline";
 import { recomputeProject } from "@/lib/projectassure/engine";
 import { computeBudgetForecast, extractFeatures, FEATURE_LABELS } from "@/lib/projectassure/ml";
-import { buildReport, downloadPdf, downloadExcel, reportFileName, REPORT_TOPICS, DEFAULT_TOPICS, filterReport } from "@/lib/projectassure/reports";
+import { buildReport, downloadPdf, downloadExcel, reportFileName, REPORT_TOPICS, DEFAULT_TOPICS, filterReport , buildPdfBase64 } from "@/lib/projectassure/reports";
 import { inr, shortDate, relTime, monthLabel } from "@/lib/projectassure/format";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -39,13 +39,12 @@ import type { Task, TaskStatus, Milestone } from "@/lib/projectassure/types";
 const TABS = [
   { id: "overview", label: "Overview", icon: FolderOpen },
   { id: "milestones", label: "Milestones", icon: Flag },
-  { id: "tasks", label: "Tasks (Kanban)", icon: KanbanSquare },
+  { id: "tasks", label: "Tasks", icon: KanbanSquare },
   { id: "budget", label: "Budget", icon: IndianRupee },
   { id: "resources", label: "Resources", icon: Users2 },
   { id: "documents", label: "Documents", icon: FileText },
-  { id: "actions", label: "Plan of Action", icon: Target },
-  { id: "risk", label: "Risk & Intelligence", icon: ShieldAlert },
-  { id: "evidence", label: "Site Evidence", icon: Camera },
+  { id: "risk", label: "Risk & Actions", icon: ShieldAlert },
+  { id: "evidence", label: "Evidence", icon: Camera },
   { id: "alerts", label: "Alerts", icon: ShieldAlert },
   { id: "audit", label: "Audit", icon: History },
 ];
@@ -111,12 +110,24 @@ export default function ProjectDetailView() {
   };
   const emailReport = async () => {
     setEmailing(true);
-    const stats = useApp.getState().stats();
-    const doc = filterReport(buildReport("project-status", [p], { ...stats, totalProjects: 1 }, user, p), topics);
-    const fn = reportFileName("project-status", p);
-    const msg = await queueEmail({ to: user.email, toName: user.name, template: "report_delivery", reportName: `${fn}.pdf`, project: p, projectId: p.id, attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb: 268 }], send: true });
-    setEmailing(false);
-    toast.success(msg.status === "SENT" ? "Report emailed (email service)" : "Report queued to the demo outbox", { description: `To: ${msg.to} · ${doc.sections.length} section(s) — your selected matter only · open the Email Centre to preview` });
+    try {
+      const stats = useApp.getState().stats();
+      const doc = filterReport(buildReport("project-status", [p], { ...stats, totalProjects: 1 }, user, p), topics);
+      const fn = reportFileName("project-status", p);
+      // v23 fix: build the REAL PDF and attach it — the mail now carries the
+      // actual document (was metadata-only before, so "attached" was a lie)
+      const base64 = await buildPdfBase64(doc);
+      const sizeKb = Math.max(1, Math.round((base64.length * 3) / 4 / 1024));
+      const msg = await queueEmail({
+        to: user.email, toName: user.name, template: "report_delivery",
+        reportName: `${fn}.pdf`, project: p, projectId: p.id,
+        attachments: [{ name: `${fn}.pdf`, kind: "pdf", sizeKb }],
+        attachmentBase64: base64, send: true,
+      });
+      toast.success(msg.status === "SENT" ? "Emailed with the PDF attached" : "Queued to the demo outbox (attachment ready)", { description: `To ${msg.to} · ${fn}.pdf (${sizeKb} KB)` });
+    } finally {
+      setEmailing(false);
+    }
   };
 
   return (
@@ -231,6 +242,32 @@ export default function ProjectDetailView() {
         </div>
       </div>
 
+      {/* v23: host approval state — visible for user-created projects */}
+      {p.approvalStatus && p.approvalStatus !== "approved" && (
+        <div className={cn("flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2.5 text-[12px]",
+          p.approvalStatus === "pending" ? "border-sky-200 bg-sky-50/60 dark:border-sky-500/25 dark:bg-sky-500/10" : "border-amber-200 bg-amber-50/60 dark:border-amber-500/25 dark:bg-amber-500/10")}>
+          <ShieldAlert className="h-4 w-4 shrink-0 text-[#0284c7]" />
+          {p.approvalStatus === "pending" ? (
+            <>
+              <span className="font-semibold">Host review pending —</span>
+              <span className="text-muted-foreground">this project's activation request is with the Central Programme Office. You'll be notified here the moment it is decided.</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">Activation rejected —</span>
+              <span className="text-muted-foreground">monitoring is paused. {p.approvalNote ? `Note: “${p.approvalNote.slice(0, 140)}”` : "See the notification for the administrator's note."}</span>
+            </>
+          )}
+        </div>
+      )}
+      {p.approvalStatus === "approved" && p.approvalAt && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-2 text-[12px] dark:border-emerald-500/25 dark:bg-emerald-500/10">
+          <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span className="font-semibold text-emerald-700 dark:text-emerald-300">Approved by Host Control</span>
+          <span className="text-muted-foreground">· monitoring fully active{p.approvalNote ? ` · “${p.approvalNote.slice(0, 100)}”` : ""}</span>
+        </div>
+      )}
+
       {/* tabs */}
       <div className="custom-scrollbar flex gap-1 overflow-x-auto rounded-xl border bg-card p-1.5">
         {TABS.map(t => (
@@ -263,8 +300,12 @@ export default function ProjectDetailView() {
           {tab === "budget" && <BudgetTab p={p} forecast={forecast!} editable={canEdit} />}
           {tab === "resources" && <ResourcesTab p={p} editable={canEdit} onUpdate={(rid, u) => updateResource(p.id, rid, u)} />}
           {tab === "documents" && <DocumentsTab p={p} onDelete={d => { if (user.role === "ADMIN") { deleteDocument(p.id, d); toast.info("Document deleted", { description: "Soft-delete · embeddings purged · audit-logged" }); } }} />}
-          {tab === "actions" && <ActionsTab p={p} onAsk={(q) => askAi(q)} />}
-          {tab === "risk" && <RiskTab p={p} onPredict={doPredict} predicting={predicting} />}
+          {tab === "risk" && (
+            <div className="space-y-4">
+              <ActionsTab p={p} onAsk={(q) => askAi(q)} />
+              <RiskTab p={p} onPredict={doPredict} predicting={predicting} />
+            </div>
+          )}
           {tab === "alerts" && <AlertsTab p={p} onAck={id => { setAckAlert(id); setAckNote(""); }} onRead={id => markAlertRead(p.id, id)} />}
           {tab === "audit" && <AuditTab p={p} />}
         </motion.div>
@@ -309,7 +350,7 @@ function OverviewTab({ p, onTab }: { p: NonNullable<ReturnType<typeof useApp.get
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[15px] font-bold tracking-tight">Executive summary</span>
           <span className="rounded-full bg-background px-2.5 py-0.5 text-[10.5px] font-bold shadow-sm">{exec.headline}</span>
-          <button onClick={() => onTab("actions")} className="ml-auto flex items-center gap-1 rounded-lg bg-background px-3 py-1.5 text-[11px] font-bold shadow-sm transition hover:scale-[1.02]">
+          <button onClick={() => onTab("risk")} className="ml-auto flex items-center gap-1 rounded-lg bg-background px-3 py-1.5 text-[11px] font-bold shadow-sm transition hover:scale-[1.02]">
             <Target className="h-3.5 w-3.5" />See the plan of action →
           </button>
         </div>

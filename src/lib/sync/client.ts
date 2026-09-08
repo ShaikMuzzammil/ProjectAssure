@@ -10,7 +10,7 @@
  * All traffic is best-effort: the app is fully usable offline.
  */
 
-import type { SyncSnapshot, SyncCommand } from "./types";
+import type { SyncSnapshot, SyncCommand, SyncApprovalRequest } from "./types";
 import type { Project, User, Notification, EmailMessage, AuditLogEntry, LiveEvent } from "@/lib/projectassure/types";
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -23,8 +23,9 @@ export function buildSyncSnapshot(args: {
   emails: EmailMessage[];
   audit: AuditLogEntry[];
   liveEvents: LiveEvent[];
+  approvalRequests?: SyncApprovalRequest[];
 }): SyncSnapshot {
-  const { projects, users, notifications, emails, audit, liveEvents } = args;
+  const { projects, users, notifications, emails, audit, liveEvents, approvalRequests } = args;
   const active = projects.filter((p) => p.status === "ACTIVE" || p.status === "ON_HOLD");
   const critical = projects.filter((p) => p.healthStatus === "CRITICAL");
   const loginFeed = audit
@@ -90,6 +91,11 @@ export function buildSyncSnapshot(args: {
       milestonesCompleted: p.milestones?.filter((m) => m.status === "COMPLETED").length ?? 0,
       milestonesDelayed: p.milestones?.filter((m) => m.status === "DELAYED").length ?? 0,
       lastActivityAt: p.healthComputedAt,
+      approvalStatus: p.approvalStatus,
+      documentsTotal: p.documents?.length ?? 0,
+      evidenceTotal: p.evidence?.length ?? 0,
+      documentIds: (p.documents ?? []).slice(0, 12).map((d) => d.id),
+      evidenceIds: (p.evidence ?? []).slice(0, 12).map((e) => e.id),
     })),
     alerts: projects
       .flatMap((p) =>
@@ -121,6 +127,7 @@ export function buildSyncSnapshot(args: {
       at: e.createdAt,
     })),
     loginFeed,
+    approvalRequests: (approvalRequests ?? []).slice(0, 40),
   };
 }
 
@@ -168,7 +175,8 @@ export async function pollCommands(clientId: string, sinceIso?: string): Promise
   }
 }
 
-export function startCommandPolling(clientIdFn: () => string | null, onCommands: (cmds: SyncCommand[]) => void, intervalMs = 20000) {
+/** v23: 8-second poll — host decisions reach the browser in near-real-time. */
+export function startCommandPolling(clientIdFn: () => string | null, onCommands: (cmds: SyncCommand[]) => void, intervalMs = 8000) {
   if (typeof window === "undefined" || pollTimer) return;
   pollTimer = setInterval(async () => {
     const clientId = clientIdFn();

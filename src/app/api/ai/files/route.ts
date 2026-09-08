@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
         risks: [],
         note:
           engine === "unavailable"
-            ? "No live document reader is configured (set GEMINI_API_KEY or run in the Z.ai sandbox). Text-like and spreadsheet files always parse for real."
+            ? "Live document reading is not connected on this deployment — text-like and spreadsheet files always parse for real."
             : "This file type could not be read into text in the current environment.",
       });
     }

@@ -1,28 +1,26 @@
 import { NextResponse } from "next/server";
 
-// GET /api/health — deployment posture & subsystem status (used by the Admin
-// "Data mode" panel and the go-live checklist). Never throws.
+// GET /api/health — deployment posture (used by Host Control's connection
+// test and the Admin data-mode panel). Never throws, never exposes which
+// provider keys are configured — only aggregate readiness flags.
 export async function GET() {
-  const env = {
-    database: !!process.env.DATABASE_URL,
-    email: !!(process.env.EMAIL_USER && process.env.EMAIL_PASS) || !!process.env.RESEND_API_KEY,
-    openai: !!process.env.OPENAI_API_KEY,
-    gemini: !!process.env.GEMINI_API_KEY,
-    redis: !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN),
-    blob: !!process.env.BLOB_READ_WRITE_TOKEN,
-    pinecone: !!process.env.PINECONE_API_KEY,
-  };
-  const mode = env.database ? "connected" : "simulation";
-  const aiProvider = process.env.GEMINI_API_KEY ? "gemini" : process.env.OPENAI_API_KEY ? "openai" : "deterministic";
+  const liveIntelligence =
+    !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GROQ_API_KEY ||
+      process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY);
+  const emailReady =
+    !!(process.env.EMAIL_USER && process.env.EMAIL_PASS) || !!process.env.BREVO_API_KEY || !!process.env.RESEND_API_KEY;
+  const mode = process.env.DATABASE_URL ? "connected" : "simulation";
   return NextResponse.json({
     ok: true,
     app: "ProjectAssure",
-    version: "ultra-2.0.0",
     mode,
-    portal: process.env.NEXT_PUBLIC_PORTAL ?? "main",
-    subsystems: env,
-    aiProvider,
-    emailProvider: env.email ? "smtp" : "outbox",
+    subsystems: {
+      database: mode === "connected",
+      intelligence: liveIntelligence,
+      email: emailReady,
+    },
+    aiProvider: liveIntelligence ? "live" : "built-in",
+    emailProvider: emailReady ? "configured" : "outbox",
     timeIST: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
   });
 }

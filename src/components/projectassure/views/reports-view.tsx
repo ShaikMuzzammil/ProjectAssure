@@ -106,18 +106,20 @@ export default function ReportsView() {
           ) : <EmptyState icon={FileText} title="No projects in scope" />}
         </div>
 
-        <div className="rounded-xl border bg-gradient-to-b from-[#072b49] to-[#0b426e] p-5 text-white">
-          <div className="flex items-center gap-2 text-[13px] font-bold"><Zap className="h-4 w-4 text-[#7cc8fb]" />How a report becomes data</div>
-          <ul className="mt-3 space-y-2.5 text-[11.5px] leading-relaxed text-white/80">
-            <li><strong className="text-white">1 · Upload</strong> — the file is received securely and its integrity is checked before anything else runs.</li>
-            <li><strong className="text-white">2 · Read</strong> — digital pages and scans are read (English + Hindi); hard-to-read pages carry a confidence score.</li>
-            <li><strong className="text-white">3 · Extract</strong> — the Smart structuring step turns free text into strict typed fields; spreadsheets are read with type checks.</li>
-            <li><strong className="text-white">4 · Validate</strong> — ranges and cross-field rules (e.g. monthly spend ≤ total, ordered dates); low confidence goes to human review.</li>
-            <li><strong className="text-white">5 · Sync</strong> — dashboards, predictions and search refresh automatically, and the project owner is notified.</li>
-          </ul>
-          <div className="mt-4 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-[10.5px] leading-relaxed text-white/70">
-            In this prototype, text and spreadsheet files are parsed for real in your browser; other formats run the same stages as a clearly-badged demo with real progress and confidence scores.
+        <div className="rounded-xl border bg-card p-5">
+          <div className="flex items-center gap-2 text-[13px] font-bold"><Zap className="h-4 w-4 text-[#0c93e7]" />What happens when you upload</div>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {["UPLOAD", "READ", "EXTRACT", "VALIDATE", "SYNC"].map((s, i, arr) => (
+              <React.Fragment key={s}>
+                <span className="rounded-full bg-[#e0effe] px-2.5 py-1 text-[10px] font-bold tracking-wider text-[#015ca0] dark:bg-[#0c93e7]/15 dark:text-[#7cc8fb]">{s}</span>
+                {i < arr.length - 1 && <span className="text-muted-foreground">→</span>}
+              </React.Fragment>
+            ))}
           </div>
+          <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+            The file is read (text and spreadsheets parse for real in your browser), fields are extracted and validated with confidence scores,
+            and dashboards, predictions and search refresh automatically — the project owner is notified.
+          </p>
         </div>
       </div>
 

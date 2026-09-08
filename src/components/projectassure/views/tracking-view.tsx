@@ -106,17 +106,17 @@ export default function TrackingView() {
               <div className="text-[10.5px] font-bold uppercase tracking-widest text-muted-foreground">Now tracking</div>
               <div className="truncate text-[15px] font-bold tracking-tight">{selected?.name ?? "—"}</div>
               <div className="text-[11px] text-muted-foreground">
-                {selected?.state} · {selected?.district} · {(selected?.budgetL ?? 0) >= 1000 ? `₹${(selected!.budgetL / 1000).toFixed(1)}K Cr` : `₹${selected?.budgetL} L`}
+                {selected?.state} · {selected?.district} · {(selected?.totalBudget ?? 0) >= 100000 ? `₹${((selected?.totalBudget ?? 0) / 100000).toFixed(1)}K Cr` : `₹${selected?.totalBudget ?? 0} L`}
               </div>
             </div>
             <div className="text-right">
               <div className="text-[10.5px] font-bold uppercase tracking-widest text-muted-foreground">Health</div>
               <div className={cn(
                 "text-[22px] font-extrabold tabular leading-none",
-                (selected?.health?.score ?? 0) >= 75 ? "text-emerald-600"
-                  : (selected?.health?.score ?? 0) >= 50 ? "text-amber-600"
+                (selected?.healthScore ?? 0) >= 75 ? "text-emerald-600"
+                  : (selected?.healthScore ?? 0) >= 50 ? "text-amber-600"
                   : "text-rose-600",
-              )}>{selected?.health?.score.toFixed(0) ?? "—"}</div>
+              )}>{selected?.healthScore.toFixed(0) ?? "—"}</div>
             </div>
           </div>
 
@@ -207,11 +207,11 @@ export default function TrackingView() {
                     <div className="mt-1 flex items-center gap-3 text-[10.5px] text-muted-foreground">
                       <span className="inline-flex items-center gap-1"><CalendarClock className="h-3 w-3" />Est. slip +{p.prediction?.estimatedDays ?? 0}d</span>
                       <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{p.state}</span>
-                      <span className="inline-flex items-center gap-1"><TrendingUp className="h-3 w-3" />{inrCompact(p.budgetL * 1e5)}</span>
+                      <span className="inline-flex items-center gap-1"><TrendingUp className="h-3 w-3" />{inrCompact(p.totalBudget * 1e5)}</span>
                     </div>
-                    {p.prediction?.factors?.length > 0 && (
+                    {(p.prediction?.factors?.length ?? 0) > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
-                        {p.prediction.factors.slice(0, 3).map(f => (
+                        {(p.prediction?.factors ?? []).slice(0, 3).map(f => (
                           <span key={f.label} className="rounded bg-amber-100/60 px-1.5 py-0.5 text-[9.5px] font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">{f.label}</span>
                         ))}
                       </div>
@@ -301,7 +301,7 @@ function MiniGantt({ project }: { project: Project }) {
         const end = new Date(t.plannedEnd).getTime();
         const width = Math.max(((end - start) / span) * 100, 2);
         const tone = t.status === "COMPLETED" ? "bg-emerald-500/80"
-          : t.status === "DELAYED" ? "bg-amber-500/80"
+          : t.status === "BLOCKED" ? "bg-amber-500/80"
           : t.status === "IN_PROGRESS" ? "bg-[#0c93e7]/80"
           : "bg-muted-foreground/50";
         return (

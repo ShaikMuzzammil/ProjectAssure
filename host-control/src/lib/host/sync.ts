@@ -65,11 +65,12 @@ export interface WebhookOutcome {
 
 export async function postCommandToMain(
   payload: {
-    kind: "broadcast" | "user-alert" | "announce" | "request-sync";
+    kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "project-approved" | "project-rejected" | "document-reviewed" | "evidence-reviewed" | "ai-request-resolved";
     title: string;
     message: string;
     severity: Severity;
     linkView?: string;
+    linkProjectId?: string;
     audience?: string;
     createdBy: string;
   },
@@ -135,7 +136,12 @@ export async function runSync(source: "poll" | "manual" | "webhook", force = fal
     d.sync.pollCount += 1;
 
     const mainUrl = effectiveMainUrl();
-    const res = await fetchWithTimeout(`${mainUrl}/api/sync/state`, { method: "GET" }, MAIN_TIMEOUT_MS);
+    // v23 fix: send the shared token on state reads too (the main app's
+    // /api/sync/state requires it when SYNC_TOKEN is set — polling used to
+    // fail with 401 forever whenever a token was configured)
+    const stateHeaders: Record<string, string> = {};
+    if (process.env.SYNC_TOKEN) stateHeaders["x-sync-token"] = process.env.SYNC_TOKEN;
+    const res = await fetchWithTimeout(`${mainUrl}/api/sync/state`, { method: "GET", headers: stateHeaders }, MAIN_TIMEOUT_MS);
 
     if (!res || !res.ok) {
       const error = res ? `HTTP ${res.status} from ${mainUrl}/api/sync/state` : `main app unreachable at ${mainUrl}`;
@@ -265,6 +271,51 @@ export async function mergeSnapshot(snapshot: SyncSnapshot, source: "poll" | "ma
     audit("approval.created", "system", `new project ${p.psId} “${p.name}” (owner ${p.ownerName}) — activation approval pending`, sev);
   }
 
+  // 3b) v23: APPROVAL REQUESTS raised inside the main app (project creation,
+  //     document / evidence submission, AI-assisted escalation) become live
+  //     approval items the moment they appear in a snapshot (real-time: the
+  //     host polls every 5s, the main app pushes immediately).
+  const seenRequests = new Set(d.approvalRequests ?? []);
+  for (const req of snapshot.approvalRequests ?? []) {
+    if (!req || !req.id || seenRequests.has(req.id)) continue;
+    d.approvalRequests.push(req.id);
+    if (d.approvalRequests.length > 600) d.approvalRequests.splice(0, d.approvalRequests.length - 600);
+    const sevMap: Record<string, Severity> = {
+      "project-activation": "info",
+      "document-review": "info",
+      "evidence-verification": "warning",
+      "ai-request": "warning",
+    };
+    const item: ApprovalItem = {
+      id: newId(),
+      kind: (req.kind as ApprovalItem["kind"]) ?? "ai-request",
+      title: req.title || "Approval request",
+      description: `${req.message || ""}\n\nRequested by ${req.requestedBy} at ${new Date(req.at).toLocaleString("en-IN")}. Deciding sends the outcome straight back to the requester's notifications.`,
+      subjectId: req.projectId ?? req.ownerId,
+      subjectLabel: req.psId ? `${req.psId}${req.project ? " · " + req.project : ""}` : (req.project ?? "Main app"),
+      ownerId: req.ownerId,
+      ownerName: req.requestedBy,
+      severity: sevMap[req.kind] ?? "info",
+      createdAt: nowIso(),
+      status: "pending",
+    };
+    addApproval(item);
+    audit("approval.created", "system", `approval request (${req.kind}) from main app: ${req.title} — pending decision`, sevMap[req.kind] ?? "info");
+  }
+
+
+  // 3c) v23: mirror project approval statuses from the main app — if a project
+  //     is already approved/rejected there, resolve any pending items here.
+  for (const p of d.mirror.projects) {
+    if (!p.approvalStatus || p.approvalStatus === "pending") continue;
+    for (const item of d.approvals) {
+      if (item.status === "pending" && item.kind === "project-activation" && item.subjectId === p.id) {
+        item.status = p.approvalStatus === "approved" ? "approved" : "rejected";
+        item.decidedAt = nowIso();
+        item.decidedBy = "auto (main app state)";
+      }
+    }
+  }
   // 4) NEW USERS → "Account access approval" approval items
   const seenUsers = new Set(d.seenUserIds);
   for (const u of d.mirror.users) {

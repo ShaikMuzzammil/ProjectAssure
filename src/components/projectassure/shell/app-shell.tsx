@@ -67,21 +67,23 @@ const NAV_META: Record<ViewId, { icon: React.ElementType; label: string; group: 
   "email-center": { icon: Mail, label: "Email Centre", group: "" },
   help: { icon: BookOpenCheck, label: "Help & Guide", group: "" },
   admin: { icon: Settings2, label: "Administration", group: "" },
+  // v23: promoted to the sidebar — these are where the dashboard's 4 KPI
+  // cards navigate, so a click always lands on a visible sidebar destination
+  alerts: { icon: ShieldAlert, label: "Early Warnings", group: "" },
+  "budget-variance": { icon: PieChart, label: "Budget Variance", group: "" },
+  "risk-score": { icon: Scale, label: "Risk Scores", group: "" },
   // hidden from the sidebar — reachable via links, bell, ⌘K and project cards
   dashboard: { icon: Gauge, label: "Command Centre", group: "_hidden" },
   "project-detail": { icon: Gauge, label: "Project Detail", group: "_hidden" },
   analytics: { icon: LineChart, label: "Analytics", group: "_hidden" },
   compare: { icon: GitCompareArrows, label: "Compare Projects", group: "_hidden" },
-  alerts: { icon: ShieldAlert, label: "Early Warnings", group: "_hidden" },
   interventions: { icon: ClipboardList, label: "Interventions", group: "_hidden" },
   workflow: { icon: Workflow, label: "Workflow Guide", group: "_hidden" },
   "vector-store": { icon: Database, label: "Vector Store", group: "_hidden" },
   notifications: { icon: Bell, label: "Notifications", group: "_hidden" },
   audit: { icon: Activity, label: "Audit Trail", group: "_hidden" },
-  "risk-score": { icon: ShieldAlert, label: "Risk Scores", group: "_hidden" },
-  "budget-variance": { icon: PieChart, label: "Budget Variance", group: "_hidden" },
   "cost-benchmark": { icon: IndianRupee, label: "Cost Benchmark", group: "_hidden" },
-  "progress-mismatch": { icon: Scale, label: "Progress Mismatch", group: "_hidden" },
+  "progress-mismatch": { icon: ShoppingCart, label: "Progress Mismatch", group: "_hidden" },
   procurement: { icon: ShoppingCart, label: "Procurement", group: "_hidden" },
   "change-orders": { icon: FileEdit, label: "Change Orders", group: "_hidden" },
   // v22: Real-time tracking — Gantt + India map + geo-audit (NEW)
@@ -103,6 +105,9 @@ export default function AppShell({ portal }: { portal: PortalId }) {
   const aiOpen = useApp(s => s.aiOpen);
   const notifications = useApp(s => s.notifications);
   const liveEvents = useApp(s => s.liveEvents);
+  const liveEventsEnabled = useApp(s => s.liveEventsEnabled);
+  const setLiveEventsEnabled = useApp(s => s.setLiveEventsEnabled);
+  const lastCloudSaveAt = useApp(s => s.lastCloudSaveAt);
   const stats = useApp(s => s.stats);
   const [mobileNav, setMobileNav] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -209,35 +214,60 @@ export default function AppShell({ portal }: { portal: PortalId }) {
               );
             })}
 
-            {/* live feed */}
+            {/* v23: live portfolio feed — simple toggle, OFF by default.
+                Tap to reveal the rolling portfolio event stream. */}
             <div className="mb-3 rounded-lg border bg-muted/30 p-2.5">
-              <div className="mb-1.5 flex items-center gap-1.5 text-[9.5px] font-bold uppercase tracking-widest text-muted-foreground">
-                <span className="relative flex h-1.5 w-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" /></span>
+              <button
+                onClick={() => setLiveEventsEnabled(!liveEventsEnabled)}
+                className="flex w-full items-center gap-1.5 text-[9.5px] font-bold uppercase tracking-widest text-muted-foreground transition hover:text-foreground"
+                aria-expanded={liveEventsEnabled}
+              >
+                <span className={cn("relative flex h-1.5 w-1.5", !liveEventsEnabled && "opacity-40")}>
+                  {liveEventsEnabled && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />}
+                  <span className={cn("relative inline-flex h-1.5 w-1.5 rounded-full", liveEventsEnabled ? "bg-emerald-500" : "bg-muted-foreground/50")} />
+                </span>
                 Live portfolio feed
-              </div>
-              <div className="custom-scrollbar max-h-28 space-y-1.5 overflow-y-auto">
-                {liveEvents.length === 0 && <div className="text-[10.5px] text-muted-foreground">Listening for portfolio events…</div>}
-                {liveEvents.slice(0, 6).map(ev => (
-                  <div key={ev.id} className="text-[10.5px] leading-snug text-muted-foreground">
-                    <span className="tabular text-[9.5px] text-muted-foreground">{relTime(ev.at)}</span>{" "}
-                    <span className="font-medium text-foreground/80">{ev.title}</span>
-                  </div>
-                ))}
-              </div>
+                <span className={cn("ml-auto flex h-3.5 w-6.5 items-center rounded-full border px-0.5 transition", liveEventsEnabled ? "justify-end bg-[#0c93e7]/20" : "justify-start bg-muted")}>
+                  <span className={cn("h-2.5 w-2.5 rounded-full transition", liveEventsEnabled ? "bg-[#0c93e7]" : "bg-muted-foreground/60")} />
+                </span>
+              </button>
+              {liveEventsEnabled && (
+                <div className="custom-scrollbar mt-1.5 max-h-28 space-y-1.5 overflow-y-auto">
+                  {liveEvents.length === 0 && <div className="text-[10.5px] text-muted-foreground">Listening for portfolio events…</div>}
+                  {liveEvents.slice(0, 6).map(ev => (
+                    <div key={ev.id} className="text-[10.5px] leading-snug text-muted-foreground">
+                      <span className="tabular text-[9.5px] text-muted-foreground">{relTime(ev.at)}</span>{" "}
+                      <span className="font-medium text-foreground/80">{ev.title}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </nav>
 
           <div className="border-t p-2.5">
-            <button onClick={() => { setAiOpen(true); }}
-              className="mb-2 flex w-full items-center gap-2 rounded-lg bg-gradient-to-r from-[#0b426e] to-[#0c93e7] px-3 py-2.5 text-left text-white shadow-sm transition hover:shadow-md">
-              <Sparkles className="h-4 w-4 shrink-0" />
-              <div className="min-w-0">
-                <div className="text-[12px] font-semibold leading-tight">Ask Assure Intelligence</div>
-                <div className="truncate text-[9.5px] text-white/70">cited · grounded · transparent</div>
+            {/* v23: workspace status card — replaced the old AI promo card.
+                Shows where the user's data lives + live sync state. */}
+            <div className="rounded-lg border bg-muted/30 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg", user.source === "registered" && user.stateToken ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-slate-500/10 text-muted-foreground")}>
+                  <Database className="h-3.5 w-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[11.5px] font-semibold leading-tight">
+                    {user.source === "registered"
+                      ? (user.stateToken ? "Cloud workspace" : "Browser workspace")
+                      : "Demo workspace"}
+                  </div>
+                  <div className="truncate text-[9.5px] text-muted-foreground">
+                    {user.source === "registered"
+                      ? (user.stateToken
+                          ? (lastCloudSaveAt ? `saved ${relTime(lastCloudSaveAt)}` : "saving to your account…")
+                          : "saved in this browser")
+                      : "curated 5-project portfolio"}
+                  </div>
+                </div>
               </div>
-            </button>
-            <div className="px-1.5 text-[9.5px] leading-relaxed text-muted-foreground">
-              18-signal model · 6-hourly scoring · ₹0 infra
             </div>
           </div>
         </aside>
@@ -325,7 +355,7 @@ export default function AppShell({ portal }: { portal: PortalId }) {
               <span>ProjectAssure · Smart India Hackathon 2026 · SIH26103 · Team NEXGEN</span>
               <span className="flex items-center gap-2">
                 <span className="flex items-center gap-1"><Zap className="h-3 w-3 text-emerald-500" />{stats().totalProjects} projects · {inr(stats().totalBudget)} sanctioned</span>
-                <span className="hidden items-center gap-1 sm:flex"><Activity className="h-3 w-3 text-[#0c93e7]" />built-in engine · demo world frozen at 10 Sep 2026</span>
+                <span className="hidden items-center gap-1 sm:flex"><Activity className="h-3 w-3 text-[#0c93e7]" />{user.source === "registered" ? (user.stateToken ? "cloud-synced workspace" : "browser workspace") : "curated demo portfolio"}</span>
               </span>
             </div>
           </footer>
