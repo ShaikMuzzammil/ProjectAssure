@@ -97,7 +97,7 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@organisation.gov.in"
+                  placeholder="cpo@mospi.gov.in"
                   className="bg-white/95 pl-9 dark:bg-slate-900"
                 />
               </div>
@@ -137,7 +137,9 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
           </Button>
 
           <p className="mt-4 text-center text-[11px] leading-relaxed text-sky-200/60">
-            Administrator credentials only · every attempt is audited.
+            Credentials are set with HOST_ADMIN_EMAIL / HOST_ADMIN_PASSWORD env vars.
+            <br />
+            6 failed attempts lock this IP for 10 minutes. Every attempt is audited.
           </p>
         </form>
 

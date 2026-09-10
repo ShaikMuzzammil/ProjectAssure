@@ -127,9 +127,9 @@ export default function DemoView() {
                   ))}
                 </ul>
 
-                <div className="mt-5 flex items-center justify-end gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
                   <div className="text-xs text-slate-500 dark:text-slate-500">
-                    one-click entry — no password needed
+                    password: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-300">{u.password}</code>
                   </div>
                   <button
                     onClick={() => enter(u.email, u.password, u.name)}

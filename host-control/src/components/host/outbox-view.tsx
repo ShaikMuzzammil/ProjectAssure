@@ -7,7 +7,7 @@
 //   · manual composer (goes through the same provider chain)
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Mail, MailWarning, Paperclip, Send, Settings2, ShieldQuestion, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Mail, MailWarning, Send, Settings2, ShieldQuestion } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, CardHead, FieldLabel, Input, PageIntro, Textarea, Toggle } from "./ui";
 import { relTime } from "@/lib/host/format";
@@ -35,8 +35,6 @@ export function OutboxView({ state, refresh }: ViewProps) {
   const [composeOpen, setComposeOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [compose, setCompose] = useState({ to: "", subject: "", body: "" });
-  // v23: real file attachments (base64) ride with the email
-  const [attachFiles, setAttachFiles] = useState<{ filename: string; contentType: string; base64: string }[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
 
   const loadStatus = useCallback(async (verify = false) => {
@@ -92,19 +90,18 @@ export function OutboxView({ state, refresh }: ViewProps) {
       const res = await fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...compose, attachments: attachFiles.length ? attachFiles : undefined }),
+        body: JSON.stringify(compose),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; entry?: EmailLogEntry; error?: string };
       if (res.ok && data.ok && data.entry) {
         if (data.entry.status === "SENT") {
-          toast.success(`Email SENT via ${data.entry.provider}`, { description: `to ${data.entry.to}${attachFiles.length ? ` · ${attachFiles.length} attachment(s) delivered` : ""}` });
+          toast.success(`Email SENT via ${data.entry.provider}`, { description: `to ${data.entry.to}` });
         } else if (data.entry.status === "SIMULATED") {
           toast.info("Email recorded as SIMULATED", { description: data.entry.reason });
         } else {
           toast.warning("Email FAILED", { description: data.entry.reason });
         }
         setCompose({ to: "", subject: "", body: "" });
-        setAttachFiles([]);
         setComposeOpen(false);
         await refresh(true);
       } else {
@@ -115,20 +112,6 @@ export function OutboxView({ state, refresh }: ViewProps) {
     } finally {
       setSending(false);
     }
-  }
-
-  function addAttachment(file: File) {
-    if (file.size > 4 * 1024 * 1024) {
-      toast.error("Attachment too large", { description: "Keep files under 4 MB so every provider accepts them." });
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? "");
-      const base64 = dataUrl.split(",")[1] ?? "";
-      if (base64) setAttachFiles((list) => [...list, { filename: file.name, contentType: file.type || "application/octet-stream", base64 }]);
-    };
-    reader.readAsDataURL(file);
   }
 
   const outbox = statusFilter === "all" ? state.outbox : state.outbox.filter((e) => e.status === statusFilter);
@@ -314,27 +297,6 @@ export function OutboxView({ state, refresh }: ViewProps) {
             <div>
               <FieldLabel htmlFor="m-body">Body</FieldLabel>
               <Textarea id="m-body" rows={5} value={compose.body} onChange={(e) => setCompose((c) => ({ ...c, body: e.target.value }))} placeholder="**bold** supported" />
-            </div>
-            {/* v23: real attachments — delivered with the email */}
-            <div>
-              <FieldLabel htmlFor="m-attach">Attachments (delivered with the email)</FieldLabel>
-              <div className="flex flex-wrap items-center gap-2">
-                <label htmlFor="m-attach" className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3 text-xs font-medium text-slate-600 transition-colors hover:border-[#0c93e7] hover:text-[#0c93e7] dark:border-slate-700 dark:text-slate-300">
-                  <Paperclip className="h-3.5 w-3.5" /> Add file
-                  <input id="m-attach" type="file" multiple className="hidden" onChange={(e) => {
-                    Array.from(e.target.files ?? []).forEach(f => addAttachment(f));
-                    e.target.value = "";
-                  }} />
-                </label>
-                {attachFiles.map((f, i) => (
-                  <span key={`${f.filename}-${i}`} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    <Paperclip className="h-3 w-3" /> {f.filename}
-                    <button type="button" onClick={() => setAttachFiles((list) => list.filter((_, idx) => idx !== i))} aria-label={`Remove ${f.filename}`} className="text-slate-400 hover:text-rose-500">
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
             </div>
             <div className="flex gap-2">
               <Button size="sm" variant="primary" loading={sending} disabled={!compose.to || !compose.subject} onClick={() => void sendManual()}>

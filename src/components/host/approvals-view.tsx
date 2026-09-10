@@ -4,26 +4,22 @@
 //   · new projects  → "New project monitoring activation"
 //   · new users     → "Account access approval"
 //   · budget breaches (> threshold %) → "Budget escalation"
-//   · v23: document submissions, site evidence, AI/intelligence requests
-// Deciding sends a live command back — the main app updates the project
-// state and notifies the requester within seconds.
+// Nothing is seeded. Approving sends a live user-alert webhook to the
+// involved user's main-app notifications.
 
 import { useMemo, useState } from "react";
-import { Check, ClipboardCheck, FileText, Info, Inbox, MapPin, Send, ShieldCheck, X } from "lucide-react";
+import { Check, ClipboardCheck, Info, Inbox, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, EmptyState, Input, PageIntro, severityTone } from "./ui";
 import { fmtDateTime, relTime } from "@/lib/host/format";
 import type { ApprovalItem, HostStateResponse } from "@/lib/host/types";
 import type { ViewProps } from "./view-props";
 
-const KIND_META: Record<ApprovalItem["kind"], { label: string; tone: "sky" | "green" | "orange" | "violet"; icon: React.ReactNode }> = {
+const KIND_META: Record<ApprovalItem["kind"], { label: string; tone: "sky" | "green" | "orange"; icon: React.ReactNode }> = {
   "project-activation": { label: "New project activation", tone: "sky", icon: <ClipboardCheck className="h-3 w-3" /> },
   "account-access": { label: "Account access", tone: "green", icon: <ShieldCheck className="h-3 w-3" /> },
   "budget-escalation": { label: "Budget escalation", tone: "orange", icon: <Info className="h-3 w-3" /> },
-  "document-review": { label: "Document submission", tone: "sky", icon: <FileText className="h-3 w-3" /> },
-  "evidence-verification": { label: "Site evidence", tone: "violet", icon: <MapPin className="h-3 w-3" /> },
-  "ai-request": { label: "Intelligence request", tone: "violet", icon: <Send className="h-3 w-3" /> },
-};;
+};
 
 export function ApprovalsView({ state, refresh }: ViewProps) {
   const [tab, setTab] = useState<"pending" | "decided">("pending");
@@ -76,7 +72,7 @@ export function ApprovalsView({ state, refresh }: ViewProps) {
     <div className="space-y-4">
       <PageIntro
         title="Approvals Centre"
-        description="Real items from live activity — new projects, new accounts, budget breaches, document submissions, site evidence and intelligence requests. Every decision flows straight back to the requester's app within seconds."
+        description="Items are derived from REAL sync data — the first mirror baselines existing records, then any new project, new account or budget breach in the main app surfaces here automatically. Approvals notify the owner in their main-app notifications within ~20 seconds."
       />
 
       <div className="flex items-center gap-2">
@@ -89,7 +85,7 @@ export function ApprovalsView({ state, refresh }: ViewProps) {
           <EmptyState
             icon={<Inbox className="h-8 w-8" />}
             title="No approvals pending"
-            hint="Create a project, upload a document, submit site evidence or ask Assure Intelligence for approval in the main app — the request appears here within seconds. Budget escalations appear when spend crosses the threshold (Email Outbox → alert settings)."
+            hint="Create a project or an account in the main app and it appears here within seconds. Budget escalations appear when a project's spend exceeds its sanctioned budget by more than the configured threshold (Email Outbox → alert settings)."
           />
         ) : (
           <EmptyState icon={<ClipboardCheck className="h-8 w-8" />} title="No decisions yet" hint="Approved and rejected items will be listed here with their notes." />

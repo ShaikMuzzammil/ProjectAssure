@@ -209,7 +209,7 @@ function builtinAnswer(question: string): string {
     bold(`${ctx.stats.users} users · ${ctx.stats.projects} projects · ${ctx.stats.openAlerts} open alerts in the live mirror.`),
     `Average health ${ctx.stats.avgHealth}; ₹${ctx.stats.budgetSpentCr}/${ctx.stats.budgetTotalCr} Cr spent.`,
     ctx.pendingApprovals ? `${ctx.pendingApprovals} approvals pending.` : "No approvals pending.",
-    `Ask about users, projects, budgets, alerts, approvals, emails or sync — answers come from the live mirror with full context.`,
+    `Ask about users, projects, budgets, alerts, approvals, emails or sync — or connect GEMINI_API_KEY / GROQ_API_KEY for full language answers.`,
   ].join("\n");
 }
 
@@ -307,6 +307,6 @@ export async function POST(req: Request) {
     provider: "builtin",
     model: "host-deterministic",
     mode: "fallback",
-    note: "Live intelligence is not connected right now — this answer was computed deterministically from the live host mirror.",
+    note: "No AI provider key is configured (GEMINI_API_KEY / GROQ_API_KEY) and the sandbox SDK was unavailable — this answer was computed deterministically from the live host mirror.",
   });
 }

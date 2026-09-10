@@ -1,5 +1,7 @@
-// ProjectAssure Host Control — SQLite (local dev)
-// With DATABASE_URL unset the host store persists to .host-store.json only.
+// ProjectAssure Host Control — Prisma schema
+// Minimal schema (no database required for the demo, but `prisma generate`
+// must succeed during `npm install` on Vercel). In production you would
+// connect this to Neon Postgres by setting DATABASE_URL.
 
 generator client {
   provider = "prisma-client-js"
@@ -15,13 +17,4 @@ model User {
   name  String
   email String @unique
   role  String
-}
-
-// v23: host-control state persistence (approvals, audit, outbox, mirror)
-// — survives serverless cold starts when DATABASE_URL is configured.
-model HostState {
-  id        String   @id @default("singleton")
-  stateJson String
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
 }

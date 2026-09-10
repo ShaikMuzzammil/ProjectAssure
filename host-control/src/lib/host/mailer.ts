@@ -23,8 +23,6 @@ export interface SendEmailInput {
   body: string;
   kind: EmailKind;
   template?: string;
-  /** v23: optional attachments — {filename, contentType, base64} */
-  attachments?: { filename: string; contentType: string; base64: string }[];
 }
 
 function wrapHtml(title: string, html: string): string {
@@ -74,14 +72,9 @@ export async function sendHostEmail(input: SendEmailInput): Promise<EmailLogEntr
   const kind = input.kind;
   const template = input.template ?? kind;
   const html = wrapHtml(template, markdownish(body));
-  // v23: attachments ride with every provider that supports them
-  const attachments = (input.attachments ?? [])
-    .filter(a => a && a.filename && a.base64)
-    .slice(0, 5)
-    .map(a => ({ filename: String(a.filename).slice(0, 120), content: a.base64, contentType: a.contentType || "application/octet-stream", encoding: "base64" as const }));
 
   const log = (status: EmailLogEntry["status"], provider: string, reason?: string): EmailLogEntry => {
-    const entry: EmailLogEntry = { id: newId(), to, subject, status, provider, kind, reason, at: nowIso(), attachments: attachments.length ? attachments.map(a => a.filename) : undefined };
+    const entry: EmailLogEntry = { id: newId(), to, subject, status, provider, kind, reason, at: nowIso() };
     addOutboxEntry(entry);
     return entry;
   };
@@ -110,7 +103,7 @@ export async function sendHostEmail(input: SendEmailInput): Promise<EmailLogEntr
       const from = smtpHost.includes("gmail")
         ? `"ProjectAssure Host Control" <${smtpUser}>`
         : `"ProjectAssure Host Control" <${process.env.ALERT_EMAIL_FROM ?? smtpUser}>`;
-      await transport.sendMail({ from, to, subject, html, text: body.replace(/\*\*/g, ""), attachments: attachments.length ? attachments : undefined });
+      await transport.sendMail({ from, to, subject, html, text: body.replace(/\*\*/g, "") });
       return log("SENT", `smtp:${smtpHost}`);
     } catch (err) {
       const msg = (err as Error).message ?? "smtp error";
@@ -125,16 +118,8 @@ export async function sendHostEmail(input: SendEmailInput): Promise<EmailLogEntr
       const res = await fetchWithTimeout("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
         headers: { "api-key": process.env.BREVO_API_KEY, "Content-Type": "application/json", accept: "application/json" },
-        body: JSON.stringify({
-          sender: { name: "ProjectAssure Host Control", email: from },
-          to: [{ email: to }],
-          subject,
-          htmlContent: html,
-          textContent: body,
-          // v23: real attachments over Brevo too
-          attachment: attachments.map(a => ({ name: a.filename, content: a.content, contentType: a.contentType })),
-        }),
-      }, 12000);
+        body: JSON.stringify({ sender: { name: "ProjectAssure Host Control", email: from }, to: [{ email: to }], subject, htmlContent: html, textContent: body }),
+      }, 8000);
       if (res && res.ok) return log("SENT", "brevo");
       const detail = res ? await res.text().catch(() => "") : "unreachable";
       return log("FAILED", "brevo", `brevo_error_${res?.status ?? 0}: ${detail.slice(0, 160)}`);
@@ -150,15 +135,8 @@ export async function sendHostEmail(input: SendEmailInput): Promise<EmailLogEntr
       const res = await fetchWithTimeout("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: `ProjectAssure Host Control <${from}>`,
-          to: [to],
-          subject,
-          html,
-          // v23: real attachments over Resend too
-          attachments: attachments.map(a => ({ filename: a.filename, content: a.content, content_type: a.contentType })),
-        }),
-      }, 12000);
+        body: JSON.stringify({ from: `ProjectAssure Host Control <${from}>`, to: [to], subject, html }),
+      }, 8000);
       if (res && res.ok) return log("SENT", "resend");
       const detail = res ? await res.text().catch(() => "") : "unreachable";
       return log("FAILED", "resend", `resend_error_${res?.status ?? 0}: ${detail.slice(0, 160)}`);

@@ -60,7 +60,6 @@ export interface User {
   email: string;
   password: string;               // demo personas ship plain demo passwords; registered accounts never store plaintext
   passwordHash?: string;          // registered accounts: pbkdf2$sha256$100000$salt$hash (Web Crypto, client-verified)
-  stateToken?: string;            // registered accounts: HMAC server token for /api/user-state (cloud workspace persistence)
   source?: "demo" | "registered"; // demo = seeded persona · registered = real sign-up with own data
   role: UserRole;
   departmentId: string;
@@ -550,9 +549,6 @@ export interface Project {
   contractor: string;
   teamSize: number;
   story?: { tier: "A" | "C"; narrative: string };
-  approvalStatus?: "pending" | "approved" | "rejected";  // host-control activation review state (user-created projects)
-  approvalNote?: string;
-  approvalAt?: string;
   createdAt: string;
   // children
   milestones: Milestone[];

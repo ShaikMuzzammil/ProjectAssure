@@ -22,7 +22,6 @@ interface ChatMessage {
 
 interface AiStatus {
   ok: boolean;
-  connected?: boolean;
   providers: { name: string; label: string; configured: boolean }[];
 }
 
@@ -91,7 +90,7 @@ export function IntelligenceView({ state }: ViewProps) {
     <div className="space-y-4">
       <PageIntro
         title="Intelligence Console"
-        description={`Ask anything about the platform — answers are ${contextNote}. Every answer is labeled with the engine that produced it.`}
+        description={`Ask anything about the platform — answers are ${contextNote}. Provider chain: Gemini → Groq → sandbox SDK → built-in deterministic engine, and every answer is labeled with the provider that produced it.`}
       />
 
       <div className="grid gap-4 xl:grid-cols-4">
@@ -186,18 +185,19 @@ export function IntelligenceView({ state }: ViewProps) {
 
         {/* provider status */}
         <Card>
-          <CardHead title="Intelligence" subtitle="always answers — labeled honestly" icon={<Cpu className="h-4 w-4" />} />
+          <CardHead title="Providers" subtitle="first working one serves" icon={<Cpu className="h-4 w-4" />} />
           <div className="space-y-2 px-5 py-4">
-            {(status?.providers ?? [{ name: "intelligence", label: "checking…", configured: true }]).map((p) => (
+            {(status?.providers ?? []).map((p) => (
               <div key={p.name} className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-200">{p.label}</p>
+                  <p className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-200">{p.name}</p>
+                  <p className="truncate text-[10px] text-slate-400">{p.label}</p>
                 </div>
-                <Badge tone={status?.connected ? "green" : "sky"}>{status?.connected ? "live" : "ready"}</Badge>
+                <Badge tone={p.configured ? "green" : "slate"}>{p.configured ? "ready" : "unset"}</Badge>
               </div>
             ))}
             <p className="pt-1 text-[10px] leading-relaxed text-slate-400">
-              Answers are grounded on the live mirror — numbers are never invented. When live intelligence is connected it answers in full language; otherwise the deterministic engine answers from the mirror, labeled honestly.
+              Add GEMINI_API_KEY (free, Google AI Studio) or GROQ_API_KEY (free) to the host env for full language answers. Without them the built-in engine answers deterministically from the mirror — labeled honestly.
             </p>
           </div>
         </Card>

@@ -26,24 +26,12 @@ import { seedKpis, buildRecommendedActions } from "@/lib/projectassure/recommend
 import { deriveRiskRegister, riskAlertsFromRegister, riskAssessmentFromRegister, buildInitialBudgetRecords, buildInitialResources, starterAlerts } from "@/lib/projectassure/risks";
 import { trainModel, predictWithModel, factorsFromModel, estimatedDaysFromFeatures, type TrainedModel, type TrainOptions } from "@/lib/projectassure/ml-lab";
 import { buildSyncSnapshot, scheduleSync, pushSyncNow, pollCommands, startCommandPolling, stopCommandPolling } from "@/lib/sync/client";
-import type { SyncCommand, SyncApprovalRequest } from "@/lib/sync/types";
+import type { SyncCommand } from "@/lib/sync/types";
 import { toast } from "sonner";
 
-const STORE_VERSION = 12;
+const STORE_VERSION = 11;
 
-// v23: per-user workspace slice that hydrates from / replaces in the store.
-export interface WorkspaceSlice {
-  projects: Project[];
-  notifications: Notification[];
-  emails: EmailMessage[];
-  interventions: Intervention[];
-  globalAudit: AuditLogEntry[];
-  liveEvents: LiveEvent[];
-  chatThreads: ChatThread[];
-  mlModels?: unknown[];
-}
-
-export interface Route { page: "landing" | "about" | "login" | "app" | "demo" | "public"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; }
+export interface Route { page: "landing" | "about" | "login" | "app" | "demo" | "public" | "forgot" | "reset"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; resetToken?: string; }
 
 export interface ProjectForm {
   name: string; description: string; sector: string; scheme: string; state: string; district: string;
@@ -114,15 +102,6 @@ interface AppState {
   syncNow: (immediate?: boolean) => Promise<boolean>;
   hostCommands: { id: string; title: string; from: string; at: string }[];
   broadcastAlert: (opts: { title: string; message: string; severity: "info" | "warning" | "critical" }) => { ok: boolean; error?: string };
-  // v23: approval requests raised from THIS workspace (pending host review)
-  approvalRequests: SyncApprovalRequest[];
-  raiseApprovalRequest: (req: Omit<SyncApprovalRequest, "id" | "at" | "requestedBy" | "ownerId">) => SyncApprovalRequest | null;
-  // v23: per-user cloud persistence (registered accounts only)
-  cloudSaving: boolean;
-  lastCloudSaveAt: string | null;
-  loadCloudWorkspace: (token: string, userId: string, opts?: { silent?: boolean }) => Promise<{ ok: boolean; error?: string }>;
-  saveUserStateNow: () => Promise<boolean>;
-  hydrateWorkspace: (slice: Partial<WorkspaceSlice>) => void;
   // v21: ML Lab — real trained models, persisted, selectable champion
   mlModels: TrainedModel[];
   mlChampionId: string | null;
@@ -148,6 +127,13 @@ interface AppState {
   signUp: (form: SignUpForm) => Promise<{ ok: boolean; error?: string; user?: User; mirrored?: boolean }>;
   logout: () => void;
   resetDemo: () => void;
+
+  // v23: password reset flow (forgot password + authenticated change).
+  // Both flows are mirrored server-side when DATABASE_URL is set; otherwise
+  // they fall back to the local store for demo accounts.
+  requestPasswordReset: (email: string) => Promise<{ ok: boolean; sent: boolean; simulated: boolean; error?: string; message?: string }>;
+  resetPassword: (token: string, newPassword: string) => Promise<{ ok: boolean; email?: string; error?: string; message?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string; message?: string }>;
 
   // ─── data mutations ───
   audit: (action: AuditAction, entity: string, details: string, opts?: { entityId?: string; before?: string; after?: string }) => void;
@@ -226,6 +212,15 @@ function hashToRoute(): Route {
   if (parts[0] === "login") return { page: "login", view: "dashboard", portal: "main" };
   if (parts[0] === "demo") return { page: "demo", view: "dashboard", portal: "main" };
   if (parts[0] === "public") return { page: "public", view: "dashboard", portal: "main" };
+  if (parts[0] === "forgot") return { page: "forgot", view: "dashboard", portal: "main" };
+  if (parts[0] === "reset") {
+    // The reset link is `#/reset?token=<token>` — preserve the query string
+    // so the reset view can read it.
+    const raw = h.replace(/^#\/?reset\??/, "");
+    const params = new URLSearchParams(raw);
+    const token = params.get("token") ?? "";
+    return { page: "reset", view: "dashboard", portal: "main", resetToken: token };
+  }
   if (parts[0] === "portal") {
     const portal = (parts[1] as PortalId) ?? "main";
     const view: ViewId = portal === "analytics" ? "analytics" : "ai-assistant";
@@ -284,7 +279,7 @@ export const useApp = create<AppState>()(
       emailSettings: DEFAULT_EMAIL_SETTINGS,
       modelVersions: MODEL_REGISTRY,
       dataMode: { mode: "simulation", databaseUrl: false, aiProvider: "deterministic", emailProvider: "outbox", lastCheckedAt: new Date().toISOString() },
-      liveEventsEnabled: false,          // v23: live portfolio feed starts OFF — one tap to reveal
+      liveEventsEnabled: true,
       density: "comfortable",
       vectorIndex: null,
       paletteOpen: false,
@@ -301,9 +296,6 @@ export const useApp = create<AppState>()(
       setActiveThread: (id) => set({ aiActiveThreadId: id }),
       lastSyncAt: null,
       hostCommands: [],
-      approvalRequests: [],           // v23: pending host-review requests from this workspace
-      cloudSaving: false,
-      lastCloudSaveAt: null,
       mlModels: [],
       mlChampionId: null,
       // v13: AI centre setters
@@ -316,16 +308,16 @@ export const useApp = create<AppState>()(
       boot: () => {
         const s = get();
         if (!s.booted) {
-          // v23: NO automatic demo world — the landing page stands alone.
-          //   demo persona login  → 5-project curated demo world
-          //   registered login    → the user's own isolated workspace
-          //   reload while logged in → persisted state keeps serving
-          set({ booted: true, vectorIndex: buildIndex(s.projects ?? []) });
-          // registered session: refresh the workspace from the cloud so a
-          // reload on a new device picks up the latest saved snapshot
-          if (s.user?.source === "registered" && s.user.stateToken) {
-            void get().loadCloudWorkspace(s.user.stateToken, s.user.id, { silent: true });
+          let projects = s.projects;
+          if (!projects.length) {
+            const world = buildWorld();
+            projects = world.projects;
+            set({
+              projects, users: world.users, notifications: world.notifications,
+              emails: world.emails, globalAudit: cap(world.globalAudit, 300),
+            });
           }
+          set({ booted: true, vectorIndex: buildIndex(projects) });
         }
         // always sync the route from the URL hash — `booted` is persisted, so a
         // reload with an active session must still restore #/app/... deep links
@@ -337,12 +329,10 @@ export const useApp = create<AppState>()(
         void get().refreshAiStatus();
         // v21: mirror state to the Sync Hub (Host Control reads it) and start
         // listening for Host broadcasts — a real bidirectional bridge.
-        // v23: 8s poll so host approvals reach this browser in near-real-time.
-        if (get().user) void get().syncNow(true);
+        void get().syncNow(true);
         startCommandPolling(
           () => get().user?.id ?? null,
-          (cmds) => applyHostCommands(set, get, cmds),
-          8000,
+          (cmds) => applyHostCommands(set, get, cmds)
         );
       },
 
@@ -378,159 +368,26 @@ export const useApp = create<AppState>()(
         set({ route: { ...r, page, portal: portal ?? "main", view: page === "app" ? (portal === "analytics" ? "analytics" : portal === "ai" ? "ai-assistant" : "monitor") : "monitor" } });
       },
 
-      // v23: hydrate a registered user's isolated workspace from the cloud.
-      // Called at login (fresh hydration) and on reload (silent refresh).
-      loadCloudWorkspace: async (token, userId, opts) => {
-        try {
-          const res = await fetch("/api/user-state", { headers: { "x-user-token": token }, cache: "no-store" });
-          if (!res.ok) return { ok: false, error: "cloud_unavailable" };
-          const data = await res.json();
-          if (data && data.snapshot && (data.snapshot.projects || data.snapshot.notifications)) {
-            const snap = data.snapshot as Partial<WorkspaceSlice>;
-            // never wipe a logged-in session with an EMPTY cloud snapshot on
-            // silent reload — only replace when the cloud actually has a world
-            const cloudHasProjects = Array.isArray(snap.projects) && snap.projects.length > 0;
-            const localHasProjects = (get().projects ?? []).length > 0;
-            if (opts?.silent && !cloudHasProjects && localHasProjects) return { ok: true };
-            get().hydrateWorkspace({
-              projects: snap.projects ?? [],
-              notifications: snap.notifications ?? [],
-              emails: snap.emails ?? [],
-              interventions: snap.interventions ?? [],
-              globalAudit: cap(snap.globalAudit ?? [], 400),
-              chatThreads: snap.chatThreads ?? [],
-            });
-          }
-          return { ok: true };
-        } catch {
-          return { ok: false, error: "network" };
-        }
-      },
-
-      hydrateWorkspace: (slice) => {
-        set(s => ({
-          projects: slice.projects ?? s.projects,
-          notifications: slice.notifications ?? s.notifications,
-          emails: slice.emails ?? s.emails,
-          interventions: slice.interventions ?? s.interventions,
-          globalAudit: slice.globalAudit ?? s.globalAudit,
-          chatThreads: slice.chatThreads ?? s.chatThreads,
-          liveEvents: [],
-          vectorIndex: buildIndex(slice.projects ?? s.projects),
-        }));
-      },
-
       login: async (email, password) => {
-        const normalized = email.trim().toLowerCase();
-        let local = get().users.find(x => x.email.toLowerCase() === normalized);
-        // v23: demo personas live in the seed directory (USERS) — the store's
-        // user list starts EMPTY now, so look personas up there when the
-        // browser has never seen them.
-        if (!local) {
-          const persona = USERS.find(u => u.email.toLowerCase() === normalized && (u.source ?? "demo") === "demo");
-          if (persona) local = persona;
+        const u = get().users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
+        if (!u) return { ok: false, error: "No account found for this email — create one on the Create account tab." };
+        if (!u.isActive) return { ok: false, error: "Account is deactivated. Contact your administrator." };
+        if (u.passwordHash) {
+          // registered account: real PBKDF2-SHA256 digest verification (100k iterations, salted)
+          const okPw = await verifyPassword(password, u.passwordHash);
+          if (!okPw) return { ok: false, error: "Incorrect password — PBKDF2 verification failed." };
+        } else if (password !== u.password) {
+          return { ok: false, error: "Invalid demo password — persona passwords are shown on the persona card." };
         }
-
-        // ── demo personas: always local, never hit the database ──
-        if (local && (local.source ?? "demo") === "demo") {
-          if (!local.isActive) return { ok: false, error: "Account is deactivated. Contact your administrator." };
-          if (password !== local.password) return { ok: false, error: "Incorrect password for this demo account." };
-          // v23: (re)build the curated 5-project demo world for persona sessions
-          const world = buildWorld();
-          const stamp = new Date().toISOString();
-          set({
-            user: { ...local, lastLoginAt: stamp },
-            projects: world.projects,
-            users: world.users.map(x => x.id === local.id ? { ...x, lastLoginAt: stamp } : x),
-            notifications: world.notifications,
-            emails: world.emails,
-            globalAudit: cap([world.globalAudit[0], ...world.globalAudit], 300),
-            interventions: [], liveEvents: [], chatThreads: [], approvalRequests: [],
-            vectorIndex: buildIndex(world.projects),
-          });
-          get().audit("LOGIN", "Session", `Demo persona session for ${local.email} (${local.role}) — curated 5-project demo world loaded`, { entityId: local.id });
-          get().goPage("app");
-          void get().syncNow(true);
-          return { ok: true, user: { ...local, lastLoginAt: stamp } };
-        }
-
-        // ── registered accounts: database-first (works cross-device) ──
-        let serverLogin: { user?: { id: string; name: string; email: string; role: UserRole; department?: string | null; designation?: string | null; avatarInitials?: string }; stateToken?: string } | null = null;
-        try {
-          const res = await fetch("/api/auth/login", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: normalized, password }),
-          });
-          if (res.ok) serverLogin = await res.json();
-          else if (res.status === 401 && !local) return { ok: false, error: "Invalid email or password." };
-        } catch { /* offline — fall back to the local record */ }
-
-        if (serverLogin?.user) {
-          // database account confirmed — hydrate the user's isolated workspace
-          const su = serverLogin.user;
-          const stamp = new Date().toISOString();
-          const u: User = {
-            id: su.id,
-            name: su.name,
-            email: su.email,
-            password: "••••••••",
-            stateToken: serverLogin.stateToken,
-            source: "registered",
-            role: su.role,
-            departmentId: su.department ? `dept-${su.department.toLowerCase()}` : (local?.departmentId ?? "dept-ipmd"),
-            avatarInitials: su.avatarInitials ?? su.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
-            designation: su.designation ?? "Registered member",
-            persona: "Registered Member",
-            personaDescription: "Own isolated workspace — projects, evidence, reports and approvals, saved per-user in the cloud database.",
-            isActive: true,
-            lastLoginAt: stamp,
-            createdAt: local?.createdAt ?? stamp,
-          };
-          set(s => ({
-            user: u,
-            users: s.users.some(x => x.id === u.id)
-              ? s.users.map(x => x.id === u.id ? { ...u, lastLoginAt: stamp } : x)
-              : [...s.users, u],
-          }));
-          get().audit("LOGIN", "Session", `Account login for ${u.email} (${u.role}) — verified against the cloud database, personal workspace hydrated`, { entityId: u.id });
-          get().pushNotification({ userId: u.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")}. If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
-          if (serverLogin.stateToken) {
-            await get().loadCloudWorkspace(serverLogin.stateToken, u.id, {});
-            get().pushNotification({ userId: u.id, title: "☁ Workspace restored", message: `Your projects, reports and approvals were restored from the cloud database — they follow you on any device.`, type: "SYSTEM", linkView: "projects" });
-          }
-          get().goPage("app");
-          void get().syncNow(true);
-          return { ok: true, user: u };
-        }
-
-        // ── simulation fallback (no DATABASE_URL): local PBKDF2 record ──
-        if (!local) return { ok: false, error: "No account found for this email — create one on the Create account tab." };
-        if (!local.isActive) return { ok: false, error: "Account is deactivated. Contact your administrator." };
-        if (local.passwordHash) {
-          const okPw = await verifyPassword(password, local.passwordHash);
-          if (!okPw) return { ok: false, error: "Incorrect password." };
-        } else if (password !== local.password) {
-          return { ok: false, error: "Incorrect password." };
-        }
-        const stamp2 = new Date().toISOString();
-        // v23: local registered login swaps to THIS user's isolated world —
-        // projects they created only (never another user's or demo data)
-        const DEMO_NOTIFICATION_IDS = new Set(["nt-1", "nt-2", "nt-3", "nt-4", "nt-5"]);
-        const own = get().projects.filter(p => p.ownerId === local.id);
-        const ownNotifs = get().notifications.filter(n =>
-          n.userId === local.id || (n.userId === "all" && !DEMO_NOTIFICATION_IDS.has(n.id)));
-        set(s => ({
-          user: { ...local, lastLoginAt: stamp2 },
-          users: s.users.map(x => x.id === local.id ? { ...x, lastLoginAt: stamp2 } : x),
-          projects: own.length ? own : [],
-          notifications: ownNotifs,
-          vectorIndex: buildIndex(own),
-        }));
-        get().audit("LOGIN", "Session", `Account login for ${local.email} (${local.role}) — browser-persisted mode (no cloud database configured)`, { entityId: local.id });
-        get().pushNotification({ userId: local.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp2).toLocaleString("en-IN")} (browser-persisted mode).`, type: "SYSTEM", linkView: "notifications" });
+        const stamp = new Date().toISOString();
+        set({ user: { ...u, lastLoginAt: stamp } });
+        set(s => ({ users: s.users.map(x => x.id === u.id ? { ...x, lastLoginAt: stamp } : x) }));
+        get().audit("LOGIN", "Session", `${u.source === "registered" ? "Account login (PBKDF2-SHA256 verified, 100k iterations)" : "Demo persona session"} for ${u.email} (${u.role}) · login event pushed to Host Control sync hub`, { entityId: u.id });
+        // v21: account-security notification for THIS user only (was leaking to everyone before)
+        get().pushNotification({ userId: u.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")} (${u.source === "registered" ? "password verified" : "demo persona"}). If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
         get().goPage("app");
         void get().syncNow(true);
-        return { ok: true, user: { ...local, lastLoginAt: stamp2 } };
+        return { ok: true, user: { ...u, lastLoginAt: stamp } };
       },
 
       signUp: async (form) => {
@@ -540,92 +397,181 @@ export const useApp = create<AppState>()(
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: "Enter a valid email address." };
         const issues = passwordIssues(form.password);
         if (issues.length) return { ok: false, error: `Password needs ${issues.join(", ")}.` };
+        if (get().users.some(x => x.email.toLowerCase() === email)) return { ok: false, error: "An account with this email already exists — switch to Sign in." };
         if (!["PROJECT_MANAGER", "STAKEHOLDER", "VIEWER"].includes(form.role)) return { ok: false, error: "Choose a valid account type." };
 
-        const role = form.role as UserRole;
-
-        // ── v23: DATABASE-FIRST registration ──
-        // The account is created in the cloud database (when configured) and
-        // the local record mirrors the server identity so this browser, other
-        // devices and Host Control all agree on one user id.
-        let serverId: string | null = null;
-        let stateToken: string | null = null;
-        let mirrored = false;
-        let conflict = false;
-        try {
-          const res = await fetch("/api/auth/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, email, password: form.password, role, departmentId: form.departmentId, designation: form.designation, phone: form.phone }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            serverId = data?.user?.id ?? null;
-            stateToken = data?.stateToken ?? null;
-            mirrored = true;
-          } else if (res.status === 409) {
-            conflict = true;
-          }
-          /* 503 SIMULATION_MODE / 503 DB_UNAVAILABLE → local account stands */
-        } catch { /* offline — local account still works */ }
-        if (conflict) return { ok: false, error: "An account with this email already exists — switch to Sign in." };
-
         const passwordHash = await hashPassword(form.password);
+        const role = form.role as UserRole;
         const u: User = {
-          id: serverId ?? `u-reg-${Date.now().toString(36).slice(-6)}`,
+          id: `u-reg-${Date.now().toString(36).slice(-6)}`,
           name, email,
           password: "••••••••",            // plaintext is never stored for registered accounts
           passwordHash,
-          stateToken: stateToken ?? undefined,
           source: "registered",
           role,
           departmentId: form.departmentId || "dept-ipmd",
           avatarInitials: name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
-          designation: form.designation?.trim() || (role === "PROJECT_MANAGER" ? "Project Manager" : role === "STAKEHOLDER" ? "Stakeholder" : "Observer"),
+          designation: form.designation?.trim() || (role === "PROJECT_MANAGER" ? "Project Manager (registered)" : role === "STAKEHOLDER" ? "Stakeholder (registered)" : "Observer (registered)"),
           persona: "Registered Member",
-          personaDescription: "Own isolated workspace — projects, evidence, reports and approvals, saved per-user in the cloud database.",
+          personaDescription: "Own workspace with per-user data isolation — create projects, upload documents, run predictions, export and email reports.",
           phone: form.phone?.trim() || undefined,
           isActive: true,
           createdAt: new Date().toISOString(),
         };
-        set(s => ({
-          users: [...s.users.filter(x => x.id !== u.id), u],
-          // v23: brand-new account → a CLEAN world. No demo projects, no demo
-          // notifications — just the user's own empty workspace.
-          projects: [],
-          notifications: [],
-          emails: [],
-          interventions: [],
-          liveEvents: [],
-          chatThreads: [],
-          approvalRequests: [],
-          vectorIndex: buildIndex([]),
-        }));
+        set(s => ({ users: [...s.users, u] }));
+
+        // mirror the account to the cloud database when configured;
+        // simulation mode returns 503 silently and the local hashed record stands
+        let mirrored = false;
+        try {
+          const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, email, password: form.password, role: u.role, departmentId: u.departmentId, designation: u.designation, phone: form.phone }),
+          });
+          mirrored = res.ok;
+        } catch { /* offline / simulation — local account still works */ }
 
         const stamp = new Date().toISOString();
         set({ user: { ...u, lastLoginAt: stamp } });
-        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "saved to the cloud database (scrypt) — the workspace persists per-user on every device" : "stored locally (demo mode — no cloud database configured)"} · auto-login`, { entityId: u.id });
-        // v23: clean welcome for a clean workspace — welcome + explore only
-        get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. ${mirrored ? "Everything you create is saved to your account in the cloud database." : "Everything you create is saved privately in this browser."}`, type: "SYSTEM", linkView: "projects" });
-        get().pushNotification({ userId: u.id, title: "Explore — create your first project", message: "Open Projects → Create project, add budget and timeline, upload field documents: monitoring, risk scanning and predictions activate automatically.", type: "SYSTEM", linkView: "projects" });
+        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt)" : "stored locally (demo mode)"} · auto-login`, { entityId: u.id });
+        get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. Create your first project to activate ML monitoring, upload documents and export reports.`, type: "SYSTEM", linkView: "projects" });
+        // v21: new user → notify every ADMIN (they govern access) + sync to hub
+        get().users.filter(x => x.role === "ADMIN" && x.id !== u.id).forEach(admin => {
+          get().pushNotification({ userId: admin.id, title: "👤 New account awaiting your watch", message: `${name} (${email}) registered as ${u.role.replace("_", " ").toLowerCase()} — visible in Host Control now.`, type: "SYSTEM", linkView: "admin" });
+        });
         get().goPage("app");
         void get().syncNow(true);
         return { ok: true, user: { ...u, lastLoginAt: stamp }, mirrored };
       },
 
       logout: () => {
-        const current = get().user;
-        if (current) {
-          // v23: flush the workspace to the cloud before ending the session
-          if (current.source === "registered" && current.stateToken) {
-            void get().saveUserStateNow();
-          }
-          get().audit("LOGOUT", "Session", "Session terminated by user");
-        }
+        if (get().user) get().audit("LOGOUT", "Session", "Session terminated by user");
         set({ user: null, aiActiveThreadId: null });
         stopCommandPolling();
         void get().syncNow(true);
         get().goPage("landing");
+      },
+
+      // v23 — forgot-password step 1: enter email, server issues a token +
+      // emails the reset link. In simulation mode (no DATABASE_URL) we still
+      // accept the request and the UI explains the demo fallback.
+      requestPasswordReset: async (email) => {
+        const e = String(email ?? "").trim().toLowerCase();
+        if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+          return { ok: false, sent: false, simulated: false, error: "Enter a valid email address." };
+        }
+        const origin = typeof window !== "undefined" ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL ?? "");
+        try {
+          const res = await fetch("/api/auth/request-reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: e, origin }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { ok?: boolean; sent?: boolean; simulated?: boolean; message?: string; error?: string };
+          if (res.ok && data.ok) {
+            get().audit("PASSWORD_RESET", "User", `Reset link requested for ${e}${data.sent ? " · emailed" : " · simulation / audit-logged"}`, {});
+            return { ok: true, sent: Boolean(data.sent), simulated: Boolean(data.simulated), message: data.message };
+          }
+          return { ok: false, sent: false, simulated: false, error: data.error ?? data.message ?? `HTTP ${res.status}` };
+        } catch (err) {
+          return { ok: false, sent: false, simulated: false, error: (err as Error).message };
+        }
+      },
+
+      // v23 — forgot-password step 2: enter token + new password. The server
+      // verifies the token, hashes the new password, marks the token as
+      // used, and audits the change. In simulation mode, we accept the
+      // token + new password and update the local store record.
+      resetPassword: async (token, newPassword) => {
+        const t = String(token ?? "").trim();
+        if (!t) return { ok: false, error: "Reset token is missing." };
+        if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+          return { ok: false, error: "Password needs 8+ characters with at least one letter and one number." };
+        }
+        try {
+          const res = await fetch("/api/auth/reset-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: t, password: newPassword }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { ok?: boolean; email?: string; message?: string; error?: string };
+          if (res.ok && data.ok) {
+            // simulation-mode fallback: also update the local store record
+            const target = get().users.find(u => u.email.toLowerCase() === (data.email ?? "").toLowerCase());
+            if (target) {
+              const passwordHash = await hashPassword(newPassword);
+              set(s => ({ users: s.users.map(u => u.id === target.id ? { ...u, passwordHash } : u) }));
+            }
+            get().audit("PASSWORD_RESET", "User", `Password reset via token${data.email ? ` for ${data.email}` : ""}`, { entityId: target?.id });
+            return { ok: true, email: data.email, message: data.message };
+          }
+          // SIMULATION_MODE: the route returns 503 with this code when no DATABASE_URL is set.
+          if (data.error === "SIMULATION_MODE") {
+            // Try to update the local store record by matching the token to a
+            // user via the in-memory pendingResetToken field (demo only).
+            const target = get().users.find(u => (u as unknown as { pendingResetToken?: string }).pendingResetToken === t);
+            if (target) {
+              const passwordHash = await hashPassword(newPassword);
+              set(s => ({ users: s.users.map(u => u.id === target.id ? { ...u, passwordHash, password: "••••••••" } : u) }));
+              get().audit("PASSWORD_RESET", "User", `Password reset via token (simulation) for ${target.email}`, { entityId: target.id });
+              return { ok: true, email: target.email, message: "Password updated (simulation mode) — sign in with your new password." };
+            }
+            return { ok: false, error: data.message ?? "Simulation mode — request a reset link first." };
+          }
+          return { ok: false, error: data.error ?? data.message ?? `HTTP ${res.status}` };
+        } catch (err) {
+          return { ok: false, error: (err as Error).message };
+        }
+      },
+
+      // v23 — authenticated password change (Settings panel). The signed-in
+      // user enters their current password + a new password. The server
+      // verifies the current password against the stored hash, then replaces
+      // it with a fresh scrypt hash. In simulation mode, we verify the
+      // current password against the local store record.
+      changePassword: async (currentPassword, newPassword) => {
+        const me = get().user;
+        if (!me) return { ok: false, error: "You must be signed in to change your password." };
+        if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+          return { ok: false, error: "New password needs 8+ characters with at least one letter and one number." };
+        }
+        if (currentPassword === newPassword) {
+          return { ok: false, error: "New password must be different from the current one." };
+        }
+        try {
+          const res = await fetch("/api/auth/change-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: me.email, currentPassword, newPassword }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
+          if (res.ok && data.ok) {
+            // mirror to the local store
+            const passwordHash = await hashPassword(newPassword);
+            set(s => ({ users: s.users.map(u => u.id === me.id ? { ...u, passwordHash, password: "••••••••" } : u) }));
+            get().audit("PASSWORD_RESET", "User", `Password changed by ${me.email} (authenticated)`, { entityId: me.id });
+            return { ok: true, message: data.message ?? "Password changed — your new password is now active." };
+          }
+          if (data.error === "SIMULATION_MODE") {
+            // simulation: verify current password against the local store
+            const local = get().users.find(u => u.id === me.id);
+            if (!local) return { ok: false, error: "Account not found locally." };
+            if (local.passwordHash) {
+              const okPw = await verifyPassword(currentPassword, local.passwordHash);
+              if (!okPw) return { ok: false, error: "Current password is incorrect." };
+            } else if (currentPassword !== local.password) {
+              return { ok: false, error: "Current password is incorrect." };
+            }
+            const passwordHash = await hashPassword(newPassword);
+            set(s => ({ users: s.users.map(u => u.id === me.id ? { ...u, passwordHash, password: "••••••••" } : u) }));
+            get().audit("PASSWORD_RESET", "User", `Password changed (simulation) for ${me.email}`, { entityId: me.id });
+            return { ok: true, message: "Password changed — your new password is now active." };
+          }
+          return { ok: false, error: data.error ?? data.message ?? `HTTP ${res.status}` };
+        } catch (err) {
+          return { ok: false, error: (err as Error).message };
+        }
       },
 
       resetDemo: () => {
@@ -706,32 +652,13 @@ export const useApp = create<AppState>()(
         p.riskAssessment = riskAssessmentFromRegister(deriveRiskRegister(p), p);
         // run the health engine once over the assembled project
         const assembled = recomputeProject(p, get().thresholds);
-        // v23: user-created projects go to Host Control for activation review
-        // (demo-world projects skip this — they are pre-approved showcase data)
-        const isDemoPersona = get().user?.source === "demo";
-        if (!isDemoPersona) {
-          assembled.approvalStatus = "pending";
-        }
         set(s => ({ projects: [assembled, ...s.projects], vectorIndex: buildIndex([assembled, ...s.projects]), liveEvents: cap([{
           id: uid("ev"), kind: "new-alert", at: new Date().toISOString(), projectId: id,
           title: `Project onboarded — ${assembled.psId}`,
           detail: `Monitoring activated: ${assembled.milestones.length} milestones · ${assembled.budgetRecords.length} budget phases · ${assembled.riskAssessment?.factors.length ?? 0} risks on the live register · prediction ${Math.round((assembled.prediction?.probability ?? 0) * 100)}%.`,
         }, ...s.liveEvents], 30) }));
         get().audit("CREATE", "Project", `Project ${p.psId} “${p.name}” created (${form.sector}, ${form.state}, ₹${form.totalBudget} L, ${dur} months) — monitoring, prediction and risk register activated automatically`, { entityId: p.id });
-        get().pushNotification({ userId: get().user!.id, title: `🛡️ Monitoring activated — ${p.psId}`, message: `“${p.name}” is live: ${p.milestones.length}-milestone board, budget phasing, baseline prediction ${Math.round((p.prediction?.probability ?? 0) * 100)}% and a ${p.riskAssessment?.factors.length ?? 0}-item risk register. Upload documents to sharpen it.`, type: "SYSTEM", linkView: "project-detail", linkProjectId: p.id });
-        // v23: real-time approval request → Host Control Approvals Centre
-        if (!isDemoPersona) {
-          get().raiseApprovalRequest({
-            kind: "project-activation",
-            projectId: assembled.id,
-            psId: assembled.psId,
-            project: assembled.name,
-            title: `New project awaiting activation — ${assembled.psId}`,
-            message: `“${assembled.name}” (${form.sector}, ${form.state}, ₹${form.totalBudget} L, ${dur} months) was created by ${get().user!.name}. Approve to confirm monitoring activation.`,
-          });
-        }
-        // v23: push immediately — the host sees this within its 5s poll
-        void get().syncNow(true);
+        get().pushNotification({ userId: "all", title: `🛡️ Monitoring activated — ${p.psId}`, message: `“${p.name}” is live: ${p.milestones.length}-milestone board, budget phasing, baseline prediction ${Math.round((p.prediction?.probability ?? 0) * 100)}% and a ${p.riskAssessment?.factors.length ?? 0}-item risk register. Upload documents to sharpen it.`, type: "SYSTEM", linkView: "project-detail", linkProjectId: p.id });
         return assembled;
       },
 
@@ -898,26 +825,10 @@ export const useApp = create<AppState>()(
           return { projects, vectorIndex: buildIndex(projects) };
         });
         get().audit("UPLOAD", "Document", `${doc.fileName} ingested → ${doc.extractedData?.fields.length ?? 0} fields validated · risk register re-derived (${riskCount} risks · ${newAlerts} new alert${newAlerts === 1 ? "" : "s"}) · prediction re-scored · search index updated`, { entityId: doc.id });
-        const project = get().projects.find(p => p.id === projectId);
-        const docUser = get().user;
-        if (docUser) {
-          get().pushNotification({ userId: docUser.id, title: `📄 Document processed — ${riskCount} risks on the register`, message: `${doc.fileName}: ${doc.extractedData?.fields.length ?? 0} fields auto-captured · risk scanner found ${doc.extractedData?.risks.filter(r => !/^No material/.test(r)).length ?? 0} document risk${(doc.extractedData?.risks.filter(r => !/^No material/.test(r)).length ?? 0) === 1 ? "" : "s"} · live register now holds ${riskCount}.`, type: "DOCUMENT", linkView: "project-detail", linkProjectId: projectId });
+        get().pushNotification({ userId: "all", title: `📄 Document processed — ${riskCount} risks on the register`, message: `${doc.fileName}: ${doc.extractedData?.fields.length ?? 0} fields auto-captured · risk scanner found ${doc.extractedData?.risks.filter(r => !/^No material/.test(r)).length ?? 0} document risk${(doc.extractedData?.risks.filter(r => !/^No material/.test(r)).length ?? 0) === 1 ? "" : "s"} · live register now holds ${riskCount}.`, type: "DOCUMENT", linkView: "project-detail", linkProjectId: projectId });
+        if (newAlerts > 0) {
+          get().pushNotification({ userId: "all", title: `🚨 ${newAlerts} new high-severity risk alert${newAlerts === 1 ? "" : "s"}`, message: `${doc.fileName} raised ${newAlerts} alert${newAlerts === 1 ? "" : "s"} — see the Early Warnings page or the project's Alerts tab.`, type: "ALERT", linkView: "alerts", linkProjectId: projectId });
         }
-        if (newAlerts > 0 && docUser) {
-          get().pushNotification({ userId: docUser.id, title: `🚨 ${newAlerts} new high-severity risk alert${newAlerts === 1 ? "" : "s"}`, message: `${doc.fileName} raised ${newAlerts} alert${newAlerts === 1 ? "" : "s"} — see the Early Warnings page or the project's Alerts tab.`, type: "ALERT", linkView: "alerts", linkProjectId: projectId });
-        }
-        // v23: real-time document-review approval request for user projects
-        if (project && docUser && docUser.source !== "demo") {
-          get().raiseApprovalRequest({
-            kind: "document-review",
-            projectId: project.id,
-            psId: project.psId,
-            project: project.name,
-            title: `Document submitted for review — ${doc.fileName}`,
-            message: `${docUser.name} uploaded “${doc.fileName}” to ${project.psId} · ${project.name}. Extracted ${doc.extractedData?.fields.length ?? 0} fields · ${riskCount} risks on the register. Review to confirm the submission.`,
-          });
-        }
-        void get().syncNow(true);
       },
 
       // v21: geo-tagged photo evidence — REAL EXIF GPS + haversine verdict
@@ -938,27 +849,13 @@ export const useApp = create<AppState>()(
           }),
         }));
         get().audit("EVIDENCE_SUBMIT", "SiteEvidence", `Geo-tagged photo “${ev.fileName}” submitted for ${p.psId}${ev.milestoneName ? ` · milestone “${ev.milestoneName}”` : ""} — verdict ${ev.verdict}${ev.distanceKm !== undefined ? ` (${ev.distanceKm} km from site)` : ""}`, { entityId: ev.id });
-        const evUser = get().user;
-        // notify the owner: verified evidence is progress proof
-        if (evUser) {
-          if (ev.verdict === "VERIFIED" || ev.verdict === "NEAR_SITE") {
-            get().pushNotification({ userId: evUser.id, title: `📸 Site evidence ${ev.verdict === "VERIFIED" ? "verified" : "flagged near-site"} — ${p.psId}`, message: `${ev.fileName} · GPS ${ev.distanceKm ?? "?"} km from site · ${ev.verdict === "VERIFIED" ? "auto-acceptable" : "needs manual review"}.`, type: "SYSTEM", linkView: "project-detail", linkProjectId: p.id });
-          } else {
-            get().pushNotification({ userId: evUser.id, title: `⚠️ Evidence rejected by GPS check — ${p.psId}`, message: `${ev.fileName}: ${ev.reason}`, type: "ALERT", linkView: "project-detail", linkProjectId: p.id });
-          }
+        // notify owners: verified evidence is progress proof
+        if (ev.verdict === "VERIFIED" || ev.verdict === "NEAR_SITE") {
+          get().pushNotification({ userId: p.ownerId ?? "all", title: `📸 Site evidence ${ev.verdict === "VERIFIED" ? "verified" : "flagged near-site"} — ${p.psId}`, message: `${ev.fileName} · GPS ${ev.distanceKm ?? "?"} km from site · ${ev.verdict === "VERIFIED" ? "auto-acceptable" : "needs manual review"}.`, type: "SYSTEM", linkView: "project-detail", linkProjectId: p.id });
+        } else {
+          get().pushNotification({ userId: p.ownerId ?? "all", title: `⚠️ Evidence rejected by GPS check — ${p.psId}`, message: `${ev.fileName}: ${ev.reason}`, type: "ALERT", linkView: "project-detail", linkProjectId: p.id });
         }
-        // v23: real-time evidence-verification approval request for user projects
-        if (evUser && evUser.source !== "demo") {
-          get().raiseApprovalRequest({
-            kind: "evidence-verification",
-            projectId: p.id,
-            psId: p.psId,
-            project: p.name,
-            title: `Site evidence awaiting verification — ${ev.fileName}`,
-            message: `${evUser.name} submitted geo-tagged photo “${ev.fileName}” for ${p.psId} · ${p.name} (GPS verdict: ${ev.verdict}${ev.distanceKm !== undefined ? `, ${ev.distanceKm} km from site` : ""}). Verify to accept the field proof.`,
-          });
-        }
-        void get().syncNow(true);
+        void get().syncNow();
         return ev;
       },
 
@@ -1112,64 +1009,11 @@ export const useApp = create<AppState>()(
       // v21: ─── Sync Hub actions ─────────────────────────────────────────
       syncNow: async (immediate) => {
         const s = get();
-        if (!immediate) {
-          scheduleSync(() => ({ buildArgs: () => buildSyncSnapshot({ projects: get().projects, users: get().users, notifications: get().notifications, emails: get().emails, audit: get().globalAudit, liveEvents: get().liveEvents, approvalRequests: get().approvalRequests }) }));
-          scheduleCloudSave(set, get);
-          return true;
-        }
-        const snapshot = buildSyncSnapshot({ projects: s.projects, users: s.users, notifications: s.notifications, emails: s.emails, audit: s.globalAudit, liveEvents: s.liveEvents, approvalRequests: s.approvalRequests });
+        if (!immediate) { scheduleSync(() => ({ buildArgs: () => buildSyncSnapshot({ projects: get().projects, users: get().users, notifications: get().notifications, emails: get().emails, audit: get().globalAudit, liveEvents: get().liveEvents }) })); return true; }
+        const snapshot = buildSyncSnapshot({ projects: s.projects, users: s.users, notifications: s.notifications, emails: s.emails, audit: s.globalAudit, liveEvents: s.liveEvents });
         const ok = await pushSyncNow(snapshot);
-        if (s.user?.source === "registered" && s.user.stateToken) void get().saveUserStateNow();
         if (ok) set({ lastSyncAt: new Date().toISOString() });
         return ok;
-      },
-
-      // v23: persist THIS user's isolated workspace to the cloud database.
-      saveUserStateNow: async () => {
-        const u = get().user;
-        if (!u || u.source !== "registered" || !u.stateToken) return false;
-        set({ cloudSaving: true });
-        try {
-          const s = get();
-          const snapshot = {
-            version: 1,
-            projects: s.projects,
-            notifications: s.notifications,
-            emails: s.emails,
-            interventions: s.interventions,
-            globalAudit: s.globalAudit.slice(0, 400),
-            chatThreads: s.chatThreads.slice(0, 6),
-            approvalRequests: s.approvalRequests,
-          };
-          const res = await fetch("/api/user-state", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", "x-user-token": u.stateToken },
-            body: JSON.stringify({ snapshot }),
-          });
-          set({ cloudSaving: false, lastCloudSaveAt: res.ok ? new Date().toISOString() : null });
-          return res.ok;
-        } catch {
-          set({ cloudSaving: false });
-          return false;
-        }
-      },
-
-      // v23: raise an approval request that surfaces in Host Control's
-      // Approvals Centre within seconds and returns as a live decision.
-      raiseApprovalRequest: (req) => {
-        const u = get().user;
-        if (!u) return null;
-        const entry: SyncApprovalRequest = {
-          ...req,
-          id: `ar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-          requestedBy: u.name,
-          ownerId: u.id,
-          at: new Date().toISOString(),
-        };
-        set(s => ({ approvalRequests: cap([entry, ...s.approvalRequests], 40) }));
-        // immediate push so the host sees it on the next 5s poll
-        void get().syncNow(true);
-        return entry;
       },
 
       broadcastAlert: ({ title, message, severity }) => {
@@ -1191,7 +1035,7 @@ export const useApp = create<AppState>()(
       // v21: ─── ML Lab actions ─────────────────────────────────────────────
       trainMlModel: (opts) => {
         const projects = get().projects.filter(p => p.status !== "CANCELLED");
-        if (projects.length < 3) return { error: "Need at least 3 non-cancelled projects with milestones to train — create a few projects first (or load the demo world)." };
+        if (projects.length < 6) return { error: "Need at least 6 non-cancelled projects with milestones to train (build the demo world or create projects first)." };
         try {
           const model = trainModel(projects, opts);
           set(s => ({ mlModels: [model, ...s.mlModels].slice(0, 10) }));
@@ -1324,7 +1168,7 @@ export const useApp = create<AppState>()(
           // v13: in universal mode with no project context, defer to a friendly offline message
           if (get().aiUniversalMode && !ctxProject) {
             answer = {
-              answer: "Universal mode is on, but live intelligence is not connected on this deployment right now.\n\nThe built-in engine still answers project questions with full grounding — switch off universal mode for portfolio analysis, or ask the administrator to connect a live intelligence provider.",
+              answer: "Universal mode is on but no live intelligence provider is available right now.\n\n→ Do: enable `GEMINI_API_KEY` (free at aistudio.google.com/apikey) in your `.env` to unlock universal answers — owner Administrator, by next deploy.",
               toolCalls: [], citations: [], intent: "universal-offline", dataFreshness: "offline · no provider connected", grounded: false, source: "builtin" as const,
             };
           } else if (ctxProject && /plan|should|recommend|next|do|assess|advice|why|risk|status|report/i.test(question)) {
@@ -1333,26 +1177,6 @@ export const useApp = create<AppState>()(
             if (trace0) trace0.args = `context: ${ctxProject.psId} · ${question.slice(0, 80)}`;
           }
           if (!answer) answer = answerQuestion(question, scopedList, get().vectorIndex);
-        }
-
-        // v23: APPROVAL INTENT — when the user asks the assistant to approve /
-        // sanction / escalate something on a project, the request is sent to
-        // Host Control in real time and the answer confirms the live loop.
-        if (ctxProject && /approv|sanction|permission|authori[sz]e|escalat|sign[- ]?off|clear.*budget|budget.*increase|extend.*time|extension/i.test(question)) {
-          const req = get().raiseApprovalRequest({
-            kind: "ai-request",
-            projectId: ctxProject.id,
-            psId: ctxProject.psId,
-            project: ctxProject.name,
-            title: `Intelligence request — ${ctxProject.psId}`,
-            message: `${get().user?.name ?? "A user"} asked Assure Intelligence: “${question.slice(0, 220)}”. The request is grounded on the project's live dossier (health ${Math.round(ctxProject.healthScore)}, delay risk ${Math.round((ctxProject.prediction?.probability ?? 0) * 100)}%). Decide to confirm or decline with a note back to the requester.`,
-          });
-          if (req) {
-            answer = {
-              ...answer,
-              answer: `${answer.answer}\n\n---\n✅ **Approval request sent to the Central Programme Office.**\n\n- Request: “${question.slice(0, 120)}”\n- Grounded on: health ${Math.round(ctxProject.healthScore)} · delay risk ${Math.round((ctxProject.prediction?.probability ?? 0) * 100)}% · ${ctxProject.milestones.filter(m => m.status === "COMPLETED").length}/${ctxProject.milestones.length} milestones\n- It is now in the host's **Approvals Centre** (real time). You will receive a notification with the decision here, usually within moments.`,
-            };
-          }
         }
 
         const aiMsg: ChatMessage = { id: uid("msg"), role: "assistant", content: answer.answer, answer, createdAt: new Date().toISOString() };
@@ -1517,11 +1341,10 @@ export const useApp = create<AppState>()(
       stats: () => computePortfolioStats(get().scoped()),
     }),
     {
-      name: "projectassure-store-v23",
+      name: "projectassure-store-v13",
       version: STORE_VERSION,
-      // v23: fresh key — the per-user isolation release. Old shared-world
-      // sessions boot clean: demo personas rebuild the 5-project world,
-      // registered accounts re-hydrate from the cloud database.
+      // v9 identity release (v12): key renamed so old sessions boot into the
+      // refreshed world (intelligence terminology, SIH-portal branding)
       storage: createJSONStorage(() => safeStorage),
       partialize: (s) => ({
         user: s.user, projects: s.projects, users: s.users, notifications: s.notifications,
@@ -1532,8 +1355,6 @@ export const useApp = create<AppState>()(
         aiUniversalMode: s.aiUniversalMode,  // v13: persists universal mode across reloads
         mlModels: s.mlModels, mlChampionId: s.mlChampionId,   // v21: trained models survive reloads
         aiAttachedFiles: s.aiAttachedFiles.slice(0, 3),       // v21: last files persist (text only, capped)
-        approvalRequests: s.approvalRequests,                // v23: pending approval requests survive reloads
-        lastCloudSaveAt: s.lastCloudSaveAt,                   // v23: cloud-save stamp
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.vectorIndex = buildIndex(state.projects ?? []);
@@ -1544,8 +1365,11 @@ export const useApp = create<AppState>()(
 
 // v21 helper: Host Control broadcasts arrive through the command poll and
 // become real notifications + toasts for the addressed audience.
-// v23: approval decisions ALSO mutate the project/evidence state directly
-// so the user sees the outcome in-project, not only as a notification.
+// v23 — host-message commands now carry entity actions (cancel project,
+// disband account, freeze budget). We parse the message body and apply the
+// side effect on the client store. (The server DB is updated on the next
+// /api/sync/push if applicable; demo/simulation mode applies the change
+// locally and notifies the user.)
 function applyHostCommands(
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
@@ -1555,73 +1379,91 @@ function applyHostCommands(
   const notifications = cmds.map((c) => ({
     id: c.id,
     userId: c.audience === "all" ? "all" : (me?.id ?? "all"),
-    title: `${c.severity === "critical" ? "🚨" : c.severity === "warning" ? "⚠️" : c.kind === "project-approved" || c.kind === "document-reviewed" || c.kind === "evidence-reviewed" || c.kind === "ai-request-resolved" ? "✅" : "📢"} ${c.title}`,
+    title: `${c.severity === "critical" ? "🚨" : c.severity === "warning" ? "⚠️" : "📢"} ${c.title}`,
     message: `${c.message}${c.createdBy ? `\n— ${c.createdBy} · Host Control` : ""}`,
     type: (c.severity === "critical" ? "ALERT" : "SYSTEM") as Notification["type"],
     isRead: false,
     createdAt: c.createdAt,
     linkView: (c.linkView as ViewId) ?? "alerts",
-    linkProjectId: c.linkProjectId,
   })) as Notification[];
-
-  // v23: apply approval decisions to the matching projects in THIS workspace
-  const approvalKinds = new Set(["project-approved", "project-rejected", "document-reviewed", "evidence-reviewed", "ai-request-resolved"]);
-  const approvalCmds = cmds.filter(c => approvalKinds.has(c.kind));
-  if (approvalCmds.length) {
-    set((s) => ({
-      projects: s.projects.map(p => {
-        const cmd = approvalCmds.find(c => c.linkProjectId === p.id);
-        if (!cmd) return p;
-        const approved = cmd.kind !== "project-rejected";
-        const stamp = new Date().toISOString();
-        return {
-          ...p,
-          approvalStatus: cmd.kind === "project-approved" ? (approved ? "approved" : "rejected") : (p.approvalStatus ?? (approved ? "approved" : "rejected")),
-          approvalNote: cmd.message.slice(0, 240),
-          approvalAt: stamp,
-          // evidence/document review decisions mark pending evidence accepted
-          evidence: (cmd.kind === "evidence-reviewed" || cmd.kind === "document-reviewed")
-            ? (p.evidence ?? []).map(e => e.reviewStatus === "pending" ? {
-              ...e,
-              reviewStatus: approved ? "accepted" as const : "rejected" as const,
-              reviewedBy: cmd.createdBy,
-              reviewedAt: stamp,
-              reviewNote: cmd.message.slice(0, 160),
-            } : e)
-            : p.evidence,
-        };
-      }),
-      // clear resolved approval requests for the touched projects
-      approvalRequests: s.approvalRequests.filter(r => !approvalCmds.some(c => c.linkProjectId === r.projectId)),
-    }));
-  }
-
   set((s) => ({
     notifications: cap([...notifications, ...s.notifications], 60),
     hostCommands: cap([...cmds.map((c) => ({ id: c.id, title: c.title, from: c.createdBy, at: c.createdAt })), ...s.hostCommands], 40),
   }));
+
+  // v23 — apply entity side-effects for host-message commands.
   for (const c of cmds) {
-    if (approvalKinds.has(c.kind)) {
-      toast("Host decision received", { description: c.title });
-      void get().syncNow(true);
-    } else {
+    if (c.kind !== "host-message") {
       toast(c.severity === "critical" ? "Host Control — critical broadcast" : "Host Control broadcast", { description: c.title });
+      continue;
+    }
+
+    // Parse the action from the message body. The host API writes a
+    // structured marker at the start (e.g. "DISBAND account u-xyz ..." or
+    // "CANCEL project PS-1023 ..." or "FREEZE project PS-1023 ...").
+    const msg = c.message ?? "";
+    const lc = msg.toLowerCase();
+    if (lc.includes("disband")) {
+      // Find the user by email or id in the message body and deactivate them.
+      // The host's subjectLabel format is "<name> · <email>" so we look for
+      // the email substring.
+      const emailMatch = msg.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+      if (emailMatch) {
+        const email = emailMatch[0].toLowerCase();
+        set((s) => ({
+          users: s.users.map((u) => u.email.toLowerCase() === email ? { ...u, isActive: false } : u),
+        }));
+        const target = get().users.find((u) => u.email.toLowerCase() === email);
+        if (target) {
+          get().audit("ACCOUNT_DISBAND", "User", `Account ${email} disbanded by Host Control (host-message webhook from ${c.createdBy})`, { entityId: target.id });
+        }
+        if (me?.email.toLowerCase() === email) {
+          // If the disbanded user is the current user, force a logout.
+          toast.error("Account disbanded by Host Control", { description: "You will be signed out — contact the CPO if this is an error." });
+          setTimeout(() => {
+            set({ user: null });
+            stopCommandPolling();
+            get().goPage("landing");
+          }, 2500);
+        } else {
+          toast.error("Host Control — account disbanded", { description: `${email} is no longer active.` });
+        }
+      }
+    } else if (lc.includes("cancel project") || lc.includes("cancel the project")) {
+      // The host's subjectLabel format is "PS-1023 · Project Name".
+      // Match the PS-id in the message body.
+      const psMatch = msg.match(/\bPS[-\s]?\d{2,6}\b/i);
+      if (psMatch) {
+        const psId = psMatch[0].replace(/\s+/g, "-").toUpperCase();
+        set((s) => ({
+          projects: s.projects.map((p) => p.psId.toUpperCase() === psId ? { ...p, status: "CANCELLED" as Project["status"] } : p),
+        }));
+        const target = get().projects.find((p) => p.psId.toUpperCase() === psId);
+        if (target) {
+          get().audit("CANCEL", "Project", `Project ${psId} “${target.name}” cancelled by Host Control (host-message webhook from ${c.createdBy})`, { entityId: target.id });
+        }
+        toast.error("Host Control — project cancelled", { description: `${psId} has been cancelled.` });
+      }
+    } else if (lc.includes("freeze") || lc.includes("block-budget")) {
+      const psMatch = msg.match(/\bPS[-\s]?\d{2,6}\b/i);
+      if (psMatch) {
+        const psId = psMatch[0].replace(/\s+/g, "-").toUpperCase();
+        // Mark the project with a "frozen" status flag — we use a comment
+        // in the description and an alert so the PM sees it.
+        set((s) => ({
+          projects: s.projects.map((p) => p.psId.toUpperCase() === psId ? { ...p, status: "ON_HOLD" as Project["status"], description: `[BUDGET FROZEN by Host Control on ${new Date().toLocaleDateString("en-IN")}] ${p.description ?? ""}` } : p),
+        }));
+        const target = get().projects.find((p) => p.psId.toUpperCase() === psId);
+        if (target) {
+          get().audit("UPDATE", "Project", `Budget frozen on ${psId} by Host Control (host-message webhook from ${c.createdBy})`, { entityId: target.id });
+        }
+        toast.error("Host Control — budget frozen", { description: `${psId} spend is frozen until the host lifts the freeze.` });
+      }
+    } else {
+      // generic host-message — just toast
+      toast("Host Control message", { description: c.title });
     }
   }
-}
-
-// v23 helper: debounced cloud save piggybacked on the sync scheduler
-let cloudSaveTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleCloudSave(
-  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
-  get: () => AppState,
-) {
-  const u = get().user;
-  if (!u || u.source !== "registered" || !u.stateToken) return;
-  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
-  cloudSaveTimer = setTimeout(() => {
-    void get().saveUserStateNow();
-  }, 2500);
 }
 
 // helper: apply rule-evaluated alerts for a project after a mutation

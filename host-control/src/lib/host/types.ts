@@ -44,25 +44,6 @@ export interface SyncProject {
   milestonesCompleted: number;
   milestonesDelayed: number;
   lastActivityAt?: string;
-  approvalStatus?: "pending" | "approved" | "rejected";
-  documentsTotal?: number;
-  evidenceTotal?: number;
-  documentIds?: string[];
-  evidenceIds?: string[];
-}
-
-/** v23: approval request raised inside the main app (creation, evidence, document, AI). */
-export interface SyncApprovalRequest {
-  id: string;
-  kind: "project-activation" | "document-review" | "evidence-verification" | "ai-request";
-  projectId?: string;
-  psId?: string;
-  project?: string;
-  title: string;
-  message: string;
-  requestedBy: string;
-  ownerId: string;
-  at: string;
 }
 
 export interface SyncAlert {
@@ -112,17 +93,15 @@ export interface SyncSnapshot {
   events: SyncEvent[];
   emails: SyncEmail[];
   loginFeed: { id: string; userId: string; userName: string; at: string; ip?: string }[];
-  approvalRequests?: SyncApprovalRequest[];
 }
 
 export interface SyncCommand {
   id: string;
-  kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "host-message" | "project-approved" | "project-rejected" | "document-reviewed" | "evidence-reviewed" | "ai-request-resolved";
+  kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "host-message";
   title: string;
   message: string;
   severity: "info" | "warning" | "critical";
   linkView?: string;
-  linkProjectId?: string;
   audience: "all" | string;
   createdAt: string;
   createdBy: string;
@@ -157,7 +136,7 @@ export interface HostAuditEntry {
 }
 
 export type EmailStatus = "SENT" | "SIMULATED" | "FAILED";
-export type EmailKind = "manual" | "login" | "budget" | "welcome" | "admin";
+export type EmailKind = "manual" | "login" | "budget" | "welcome" | "admin" | "disband";
 
 export interface EmailLogEntry {
   id: string;
@@ -168,11 +147,18 @@ export interface EmailLogEntry {
   kind: EmailKind;
   reason?: string;
   at: string;
-  /** v23: attachment filenames that were actually delivered with the mail */
-  attachments?: string[];
 }
 
-export type ApprovalKind = "project-activation" | "account-access" | "budget-escalation" | "document-review" | "evidence-verification" | "ai-request";
+export type ApprovalKind = "project-activation" | "account-access" | "budget-escalation";
+
+// v23 — reject actions: when the host rejects an approval, the admin picks
+// what should happen to the underlying entity. Each kind has its own set of
+// allowed actions; the API validates against this union.
+export type RejectAction =
+  | "notify-only"            // reject the approval but the entity stays untouched (the old default)
+  | "reject-project"         // project-activation: cancel the project in the main app (sends a webhook)
+  | "disband-account"        // account-access: deactivate the user's account in the main app + block future logins
+  | "block-budget";          // budget-escalation: freeze further spend on the project (sends a webhook)
 
 export interface ApprovalItem {
   id: string;
@@ -189,6 +175,13 @@ export interface ApprovalItem {
   decidedAt?: string;
   decidedBy?: string;
   note?: string;
+  // v23: when status === "rejected", the action that was taken on the entity
+  rejectAction?: RejectAction;
+  // v23: when status === "rejected" and rejectAction != "notify-only", did
+  // the main-app webhook succeed? used by the Approvals Centre UI to show
+  // honest delivery state.
+  rejectActionDelivered?: boolean;
+  rejectActionNote?: string;
 }
 
 export interface BroadcastRecord {

@@ -89,19 +89,13 @@ export function computePortfolioStats(projects: Project[]): PortfolioStats {
 }
 
 // ─── RBAC scoping ───────────────────────────────────────────────────────────
-// v23: registered accounts see ONLY what they created — their workspace is
-// fully isolated from the demo world and from every other user.
-// Demo personas keep the shared curated 5-project world with role scoping.
 export function scopedProjects(projects: Project[], user: User): Project[] {
-  const own = (p: Project) => p.ownerId === user.id;
-  if (user.source === "registered") {
-    return projects.filter(p => own(p));
-  }
+  const own = (p: Project) => p.ownerId === user.id; // registered-account ownership always wins
   switch (user.role) {
     case "ADMIN": return projects;
     case "PROJECT_MANAGER": return projects.filter(p => own(p) || p.projectManager === user.name);
     case "STAKEHOLDER": return projects.filter(p => own(p) || p.departmentId === user.departmentId);
-    case "VIEWER": return projects.filter(p => own(p) || p.projectManager === user.name || projects.length <= 8);
+    case "VIEWER": return projects.filter(p => own(p) || ["prj-01", "prj-02", "prj-03", "prj-04", "prj-05", "prj-19"].includes(p.id));
     default: return [];
   }
 }

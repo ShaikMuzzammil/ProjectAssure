@@ -152,34 +152,21 @@ export default function IndiaMapView() {
       const marker = L.marker([p.latitude, p.longitude], { icon }).addTo(mapInstance.current);
       const probPct = Math.round(prob * 100);
       marker.bindPopup(`
-        <div style="min-width:220px; font-family: Inter, system-ui, sans-serif;">
+        <div style="min-width:200px; font-family: Inter, system-ui, sans-serif;">
           <div style="font-size:10px; font-weight:700; color:#0c93e7; letter-spacing:0.08em; text-transform:uppercase;">${p.psId} · ${p.state}</div>
           <div style="font-size:13px; font-weight:700; margin:2px 0 4px;">${p.name}</div>
-          <div style="font-size:11px; color:#64748b;">${p.district} · ${inrCompact(p.totalBudget * 1e5)} · ${p.progress}% done</div>
-          <div style="font-size:11px; color:#64748b; margin-top:3px;">Health ${Math.round(p.healthScore)} · ${p.milestones.filter(m => m.status === "COMPLETED").length}/${p.milestones.length} milestones · delay risk ${probPct}%</div>
-          <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <div style="font-size:11px; color:#64748b;">${p.district} · ${inrCompact(p.budgetL * 1e5)} · ${p.progress}% done</div>
+          <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
             <span style="font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; background:${color}22; color:${color};">${p.status}</span>
             ${prob > 0 ? `<span style="font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; background:#f59e0b22; color:#d97706;">${probPct}% delay</span>` : ""}
-            ${p.approvalStatus === "pending" ? `<span style="font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; background:#0c93e722; color:#0284c7;">⏳ host review</span>` : ""}
           </div>
           <div style="margin-top:8px;"><a href="#/app/project-detail/${p.id}/overview" style="font-size:11px; color:#0284c7; font-weight:600; text-decoration:none;">Open detail →</a></div>
         </div>
       `);
-      // v23: clicking a pin dives INTO the location — fly-to + zoom so the
-      // user sees the actual site area, then the detail card opens
-      marker.on("click", () => {
-        setSelected(p);
-        mapInstance.current?.flyTo([p.latitude, p.longitude], 8, { duration: 0.9 });
-      });
+      marker.on("click", () => setSelected(p));
       markersRef.current.push(marker);
     }
   }, [visible, ready, tick]);
-
-  // v23: "zoom to location" from the project list / detail card too
-  const focusProject = (p: Project) => {
-    setSelected(p);
-    mapInstance.current?.flyTo([p.latitude, p.longitude], 8, { duration: 0.9 });
-  };
 
   const counts = useMemo(() => {
     const total = projects.length;
@@ -249,21 +236,7 @@ export default function IndiaMapView() {
               <div className="text-[10px] font-bold uppercase tracking-widest text-[#0c93e7]">{selected.psId} · {selected.state}</div>
               <div className="mt-1 text-[13px] font-bold leading-tight">{selected.name}</div>
               <div className="mt-1 text-[11px] text-muted-foreground">
-                {selected.district}, {selected.state} · {inrCompact(selected.totalBudget * 1e5)} · {selected.progress}% complete
-              </div>
-              <div className="mt-1.5 grid grid-cols-3 gap-1.5 text-center">
-                <div className="rounded-md bg-muted/50 px-1.5 py-1">
-                  <div className="text-[13px] font-bold tabular">{Math.round(selected.healthScore)}</div>
-                  <div className="text-[8.5px] font-bold uppercase tracking-wider text-muted-foreground">health</div>
-                </div>
-                <div className="rounded-md bg-muted/50 px-1.5 py-1">
-                  <div className="text-[13px] font-bold tabular">{selected.milestones.filter(m => m.status === "COMPLETED").length}/{selected.milestones.length}</div>
-                  <div className="text-[8.5px] font-bold uppercase tracking-wider text-muted-foreground">milestones</div>
-                </div>
-                <div className="rounded-md bg-muted/50 px-1.5 py-1">
-                  <div className="text-[13px] font-bold tabular">{Math.round((selected.prediction?.probability ?? 0) * 100)}%</div>
-                  <div className="text-[8.5px] font-bold uppercase tracking-wider text-muted-foreground">delay risk</div>
-                </div>
+                {selected.district} · {inrCompact(selected.budgetL * 1e5)} · {selected.progress}% complete
               </div>
               <div className="mt-2 flex items-center gap-2 text-[10.5px]">
                 <span className="rounded px-1.5 py-0.5 font-bold" style={{ background: STATUS_COLOR[selected.status] + "22", color: STATUS_COLOR[selected.status] }}>
@@ -298,13 +271,16 @@ export default function IndiaMapView() {
                 const prob = p.prediction?.probability ?? 0;
                 const color = prob > 0.7 ? "#dc2626" : prob > 0.5 ? "#f59e0b" : STATUS_COLOR[p.status] ?? "#64748b";
                 return (
-                  <button key={p.id} onClick={() => focusProject(p)}
+                  <button key={p.id} onClick={() => {
+                    setSelected(p);
+                    mapInstance.current?.setView([p.latitude, p.longitude], 7);
+                  }}
                     className={cn("flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition",
                       selected?.id === p.id ? "border-[#0c93e7] bg-[#e0effe]/40 dark:bg-[#0c93e7]/10" : "hover:bg-muted")}>
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 0 2px ${color}33` }} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[11.5px] font-semibold">{p.psId} · {p.name.slice(0, 28)}{p.name.length > 28 ? "…" : ""}</div>
-                      <div className="text-[9.5px] text-muted-foreground">{p.state} · {p.progress}% · {inrCompact(p.totalBudget * 1e5)}</div>
+                      <div className="text-[9.5px] text-muted-foreground">{p.state} · {p.progress}% · {inrCompact(p.budgetL * 1e5)}</div>
                     </div>
                     {prob > 0 && <span className="text-[10px] font-bold text-amber-600">{Math.round(prob * 100)}%</span>}
                   </button>

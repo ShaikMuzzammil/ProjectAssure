@@ -44,25 +44,6 @@ export interface SyncProject {
   milestonesCompleted: number;
   milestonesDelayed: number;
   lastActivityAt?: string;
-  approvalStatus?: "pending" | "approved" | "rejected";
-  documentsTotal?: number;
-  evidenceTotal?: number;
-  documentIds?: string[];
-  evidenceIds?: string[];
-}
-
-/** v23: approval request raised inside the main app (creation, evidence, document, AI). */
-export interface SyncApprovalRequest {
-  id: string;
-  kind: "project-activation" | "document-review" | "evidence-verification" | "ai-request";
-  projectId?: string;
-  psId?: string;
-  project?: string;
-  title: string;
-  message: string;
-  requestedBy: string;
-  ownerId: string;
-  at: string;
 }
 
 export interface SyncAlert {
@@ -112,17 +93,15 @@ export interface SyncSnapshot {
   events: SyncEvent[];
   emails: SyncEmail[];
   loginFeed: { id: string; userId: string; userName: string; at: string; ip?: string }[];
-  approvalRequests?: SyncApprovalRequest[];
 }
 
 export interface SyncCommand {
   id: string;
-  kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "host-message" | "project-approved" | "project-rejected" | "document-reviewed" | "evidence-reviewed" | "ai-request-resolved";
+  kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "host-message";
   title: string;
   message: string;
   severity: "info" | "warning" | "critical";
   linkView?: string;
-  linkProjectId?: string;
   audience: "all" | string;
   createdAt: string;
   createdBy: string;
@@ -168,11 +147,9 @@ export interface EmailLogEntry {
   kind: EmailKind;
   reason?: string;
   at: string;
-  /** v23: attachment filenames that were actually delivered with the mail */
-  attachments?: string[];
 }
 
-export type ApprovalKind = "project-activation" | "account-access" | "budget-escalation" | "document-review" | "evidence-verification" | "ai-request";
+export type ApprovalKind = "project-activation" | "account-access" | "budget-escalation";
 
 export interface ApprovalItem {
   id: string;

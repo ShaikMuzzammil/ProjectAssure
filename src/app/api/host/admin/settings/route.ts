@@ -18,12 +18,7 @@ export async function GET(req: Request) {
     env: envChecklist(),
     providers: {
       email: emailProviderLabel(),
-      database: Boolean(process.env.DATABASE_URL),
       ai: {
-        live: Boolean(
-          process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GROQ_API_KEY ||
-          process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
-        ),
         gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
         groq: Boolean(process.env.GROQ_API_KEY),
         sandboxSdk: true, // z-ai-web-dev-sdk ships with the app; works in this sandbox

@@ -1,13 +1,31 @@
 "use client";
 
-import React from "react";
-import { motion } from "framer-motion";
+import React, { useState, useRef, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useApp } from "@/store/app-store";
 import {
   ShieldAlert, ArrowRight, FileSearch, TrendingUp, Bell, BrainCircuit, Lock,
   CheckCircle2, Globe, Activity, FileText, Mail, Workflow, Gauge, FolderKanban, FlaskConical, BookOpenCheck,
+  ChevronDown, LayoutDashboard, Users, ClipboardCheck, Radio, ScrollText, PlugZap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// v23 — Host Control dropdown options. Mirrors the nine views exposed by the
+// host-control shell (see host-control/src/components/host/shell.tsx). Each
+// item deep-links into the live host deployment via its hash route, so a
+// visitor can jump straight to the panel they care about.
+const HOST_CONTROL_URL = "https://project-assure-host.vercel.app/";
+const HOST_CONTROL_OPTIONS = [
+  { icon: LayoutDashboard, label: "Mission Dashboard", hash: "#/dashboard" },
+  { icon: Users,            label: "User Management",   hash: "#/users" },
+  { icon: FolderKanban,     label: "Projects Control",  hash: "#/projects" },
+  { icon: ClipboardCheck,   label: "Approvals Centre",  hash: "#/approvals" },
+  { icon: Radio,            label: "Alerts & Broadcast", hash: "#/alerts" },
+  { icon: Mail,             label: "Email Outbox",      hash: "#/outbox" },
+  { icon: ScrollText,       label: "Audit Trail",       hash: "#/audit" },
+  { icon: BrainCircuit,     label: "Intelligence",      hash: "#/intelligence" },
+  { icon: PlugZap,           label: "Integrations",      hash: "#/integrations" },
+] as const;
 
 const fadeUp = { initial: { opacity: 0, y: 22 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, margin: "-80px" }, transition: { duration: 0.55, ease: [0.16, 1, 0.3, 1] as const } };
 
@@ -47,6 +65,36 @@ const WORKFLOW = [
 
 export default function LandingView() {
   const goPage = useApp(s => s.goPage);
+
+  // v23 — Host Control dropdown state. The chevron toggle reveals a stack of
+  // deep-links to the nine host-control panels. Clicking anywhere outside the
+  // panel (or pressing Escape) collapses it again.
+  const [hostOpen, setHostOpen] = useState(false);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hostOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (hostRef.current && !hostRef.current.contains(e.target as Node)) {
+        setHostOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHostOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [hostOpen]);
+
+  const openHost = (hash?: string) => {
+    const target = hash ? `${HOST_CONTROL_URL}${hash}` : HOST_CONTROL_URL;
+    window.open(target, "_blank", "noopener,noreferrer");
+    setHostOpen(false);
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -303,9 +351,77 @@ export default function LandingView() {
               <div>Problem SIH26103 · Theme: Smart Automation · Category: Software</div>
               <div>Team NEXGEN — Amrita Vishwa Vidyapeetham, Chennai Campus</div>
             </div>
-            <a href="#" onClick={(e) => { e.preventDefault(); window.open("https://projectassure-host.vercel.app", "_blank"); }} className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/10 hover:text-white">
-              Host Control →
-            </a>
+            {/* v23 — Host Control button + toggle. The chevron reveal expands a
+                dropdown of the nine host-control panels (mirrors the host shell
+                NAV). The main label still opens the live host deployment in a
+                new tab; the dropdown items deep-link to each panel. */}
+            <div className="relative" ref={hostRef}>
+              <div className="flex items-stretch overflow-hidden rounded-lg border border-white/20 bg-white/5">
+                <button
+                  type="button"
+                  onClick={() => openHost()}
+                  title="Open ProjectAssure Host Control in a new tab"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[11.5px] font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+                >
+                  Host Control
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHostOpen(v => !v)}
+                  aria-expanded={hostOpen}
+                  aria-haspopup="menu"
+                  aria-label={hostOpen ? "Collapse Host Control options" : "Reveal Host Control options"}
+                  title={hostOpen ? "Hide Host Control options" : "Reveal Host Control options"}
+                  className="flex items-center justify-center border-l border-white/15 px-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                >
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 transition-transform duration-200",
+                      hostOpen && "rotate-180"
+                    )}
+                  />
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {hostOpen && (
+                  <motion.ul
+                    role="menu"
+                    initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                    transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute bottom-full right-0 z-50 mb-2 w-64 overflow-hidden rounded-xl border border-white/10 bg-[#072b49] shadow-2xl shadow-black/40"
+                  >
+                    <li className="border-b border-white/10 px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-sky-300/80">
+                        Host Control · panels
+                      </div>
+                      <div className="text-[10px] text-white/40">
+                        Opens in a new tab — admin login required
+                      </div>
+                    </li>
+                    {HOST_CONTROL_OPTIONS.map((opt) => (
+                      <li key={opt.hash} role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => openHost(opt.hash)}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+                        >
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/5 text-sky-300">
+                            <opt.icon className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="flex-1">{opt.label}</span>
+                          <ArrowRight className="h-3 w-3 text-white/40" />
+                        </button>
+                      </li>
+                    ))}
+                  </motion.ul>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </footer>

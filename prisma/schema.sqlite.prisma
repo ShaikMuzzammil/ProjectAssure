@@ -55,6 +55,7 @@ model User {
   notifications Notification[]
   documents    Document[]
   auditLogs    AuditLog[]
+  passwordResetTokens PasswordResetToken[]
   @@index([departmentId])
   @@index([role])
 }
@@ -308,7 +309,7 @@ model Document {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD
+  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD|PASSWORD_RESET|ACCOUNT_DISBAND
   entity    String
   entityId  String?
   details   String
@@ -326,41 +327,18 @@ model AuditLog {
   @@index([createdAt])
 }
 
-// ── v23: UNIVERSAL PER-USER PERSISTENCE ──────────────────────────────────────
-// UserState stores each registered user's complete workspace (projects,
-// notifications, emails, audit, interventions...) as a versioned JSON snapshot.
-// This gives every account its own isolated, database-backed world that loads
-// on any device — separate from demo personas and from other users.
-model UserState {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  email        String
-  snapshotJson String
-  version      Int      @default(1)
-  updatedAt    DateTime @updatedAt
-  createdAt    DateTime @default(now())
-  @@index([userId])
-  @@index([updatedAt])
-}
-
-// SyncHubState persists the main ↔ host bridge (mirrored snapshot + command
-// queue) so approvals/broadcasts survive serverless cold starts on Vercel.
-model SyncHubState {
-  id            String   @id @default("singleton")
-  snapshotJson  String?
-  commandsJson  String   @default("[]")
-  revision      Int      @default(0)
-  lastPushAt    DateTime?
-  lastWebhookAt DateTime?
-  updatedAt     DateTime @updatedAt
-  @@index([updatedAt])
-}
-
-// HostState — persistence for the embedded host-control copy inside the main
-// app (approvals/audit/outbox), used when DATABASE_URL is configured.
-model HostState {
-  id        String   @id @default("singleton")
-  stateJson String
-  updatedAt DateTime @updatedAt
+// v23: password reset tokens — issued by /api/auth/request-reset, consumed by
+// /api/auth/reset-password. Single-use, 1-hour expiry, scoped to one user.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique // 32-byte hex
+  expiresAt DateTime
+  usedAt    DateTime?
+  ipIssued  String?
+  ipUsed    String?
   createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([expiresAt])
 }

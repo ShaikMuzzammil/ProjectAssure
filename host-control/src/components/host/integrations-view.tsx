@@ -5,7 +5,7 @@
 // explanation, env-var checklist and a short setup guide.
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, PlugZap, RefreshCw, Save, Wifi, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, PlugZap, RefreshCw, Save, Wifi, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, CardHead, FieldLabel, Input, PageIntro } from "./ui";
 import type { EnvCheckItem } from "@/lib/host/types";
@@ -15,8 +15,9 @@ interface SettingsResponse {
   ok: boolean;
   settings: { mainUrlOverride: string | null; loginAlerts: boolean; budgetAlerts: boolean; budgetThresholdPct: number };
   mainUrl: string;
-  env?: EnvCheckItem[];
-  providers?: { email?: string; database?: boolean; ai?: { live?: boolean; gemini?: boolean; groq?: boolean; sandboxSdk?: boolean; builtinFallback?: boolean } };
+  env: EnvCheckItem[];
+  persistence?: { mode: string; warning: string };
+  providers: { email: string; ai: { gemini: boolean; groq: boolean; sandboxSdk: boolean; builtinFallback: boolean } };
 }
 
 export function IntegrationsView({ state, refresh }: ViewProps) {
@@ -54,9 +55,20 @@ export function IntegrationsView({ state, refresh }: ViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mainUrlOverride: urlDraft.trim() }),
       });
-      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; hint?: string; mainUrl?: string };
+      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; hint?: string; mainUrl?: string; changed?: boolean; note?: string; persistence?: string };
       if (res.ok && d.ok) {
-        toast.success("Main app URL saved", { description: `effective URL → ${d.mainUrl ?? urlDraft}` });
+        // v23 — be honest about whether a change actually happened. When the
+        // sent value matched what was already stored, the API returns
+        // changed:false and a note explaining the no-op. We surface that in
+        // the toast so the user understands "Save" wasn't broken — there was
+        // nothing new to persist.
+        if (d.changed === false) {
+          toast.info("No change to save", { description: d.note ?? "The value matched the stored setting." });
+        } else {
+          toast.success("Main app URL saved", {
+            description: `effective URL → ${d.mainUrl ?? urlDraft}${d.persistence ? ` · ${d.persistence}` : ""}`,
+          });
+        }
         setUrlEdit(null); // back to mirror-driven value
         await Promise.all([load(), refresh(true)]);
       } else {
@@ -92,7 +104,7 @@ export function IntegrationsView({ state, refresh }: ViewProps) {
     <div className="space-y-4">
       <PageIntro
         title="Integrations & Setup"
-        description="The host talks to the main ProjectAssure app strictly server-to-server. Configure the URL, verify reachability and see aggregate system status."
+        description="The host talks to the main ProjectAssure app strictly server-to-server (CORS never applies). Configure the URL, verify reachability, and check which integrations have keys."
       />
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -140,9 +152,15 @@ export function IntegrationsView({ state, refresh }: ViewProps) {
               ) : null}
             </div>
             <p className="text-[10px] leading-relaxed text-slate-400">
-              Paste your main app URL above (or set it in the deployment environment). Last poll state:{" "}
-              <span className="font-semibold">{state.sync.mainReachable ? "reachable" : "unreachable"}</span> · last sync {state.sync.lastSyncAt ?? "—" }.
+              In dev the main app runs on http://localhost:3000. In production set MAIN_PROJECT_URL to its Vercel URL. The last poll state:{" "}
+              <span className="font-semibold">{state.sync.mainReachable ? "reachable" : "unreachable"}</span> · last sync {state.sync.lastSyncAt ?? "—"}.
             </p>
+            {data?.persistence ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[10.5px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                <p className="font-semibold">Persistence · {data.persistence.mode}</p>
+                <p className="mt-0.5">{data.persistence.warning}</p>
+              </div>
+            ) : null}
           </div>
         </Card>
 
@@ -159,10 +177,10 @@ main app sync hub (server)
   ▼
 host-control (this app)
   │  mirror → approvals → automated emails → UI (5s poll)
-  └  main-app browsers poll /api/sync/commands every 8s
+  └  main-app browsers poll /api/sync/commands every 20s
      → broadcasts land as notifications + toasts`}</pre>
             <p className="text-[10px] leading-relaxed text-slate-400">
-              Approvals decided here flow back as live commands — the requesting user sees the outcome in their notifications within seconds.
+              Optional push mode: POST /api/admin/sync with header <code className="font-mono">x-sync-token</code> (SYNC_TOKEN) lets the main app push snapshots directly — polling stays the default.
             </p>
             <div className="flex flex-wrap gap-2 text-[11px]">
               <Badge tone="sky">mode: {state.sync.mode}</Badge>
@@ -175,27 +193,56 @@ host-control (this app)
         </Card>
       </div>
 
-      {/* v23: compact system status — aggregate readiness, no key names */}
-      <Card>
-        <CardHead title="System status" subtitle="aggregate readiness — configuration details stay server-side" icon={<CheckCircle2 className="h-4 w-4" />} />
-        <div className="grid gap-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Database</p>
-            <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-200">{data?.providers?.database ? "Connected — approvals persist across restarts" : "Browser/memory mode"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Intelligence</p>
-            <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-200">{data?.providers?.ai?.live ? "Live model connected" : "Built-in mirror engine"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Email delivery</p>
-            <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-200">{data?.providers?.email && data.providers.email !== "outbox" ? "Provider connected — real emails" : "Outbox simulation"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Sync bridge</p>
-            <p className="mt-0.5 text-xs font-semibold text-slate-700 dark:text-slate-200">{state.sync.mainReachable ? "Live — polling every 5s" : "Waiting for the main app"}</p>
-          </div>
+      {/* env checklist */}
+      <Card className="overflow-hidden">
+        <CardHead title="Environment checklist" subtitle="read server-side right now — values are never shown" icon={<CheckCircle2 className="h-4 w-4" />} />
+        <div className="host-scroll max-h-96 overflow-y-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400 dark:border-slate-800">
+                <th className="px-5 py-2.5">Variable</th>
+                <th className="px-3 py-2.5">Status</th>
+                <th className="px-3 py-2.5">Purpose</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800/60">
+              {(data?.env ?? []).map((item) => (
+                <tr key={item.key}>
+                  <td className="px-5 py-2.5">
+                    <span className="font-mono text-[11px] font-semibold text-[#072b49] dark:text-sky-300">{item.key}</span>
+                    <p className="text-[10px] text-slate-400">{item.label}</p>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {item.set ? (
+                      <Badge tone="green"><CheckCircle2 className="h-3 w-3" /> set</Badge>
+                    ) : (
+                      <Badge tone="slate"><CircleDashed className="h-3 w-3" /> unset</Badge>
+                    )}
+                  </td>
+                  <td className="max-w-md px-3 py-2.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{item.purpose}</td>
+                </tr>
+              ))}
+              {data ? null : (
+                <tr>
+                  <td colSpan={3} className="px-5 py-6 text-center text-xs text-slate-400">loading checklist…</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
+      </Card>
+
+      {/* setup guide */}
+      <Card>
+        <CardHead title="Setup guide" subtitle="two apps, one bridge — 6 steps" icon={<PlugZap className="h-4 w-4" />} />
+        <ol className="host-scroll max-h-72 space-y-2.5 overflow-y-auto px-5 py-4 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+          <li><strong>1.</strong> Run the main app → <code className="font-mono text-[10px]">cd prototype && bun install && bun run dev</code> (port 3000).</li>
+          <li><strong>2.</strong> Run host-control → <code className="font-mono text-[10px]">cd host-control && bun install && bun run dev</code> (port 3001).</li>
+          <li><strong>3.</strong> Open the main app in a browser and log in (any persona or a sign-up) — its client pushes the portfolio snapshot on login and every 45s.</li>
+          <li><strong>4.</strong> Log into host-control (HOST_ADMIN_EMAIL / HOST_ADMIN_PASSWORD) — the mirror fills within seconds; users, projects and approvals are REAL.</li>
+          <li><strong>5.</strong> Optional real email: set EMAIL_USER + EMAIL_PASS (Gmail App Password) or BREVO_API_KEY in host-control .env → login/budget/welcome emails go out for real, logged in the Outbox.</li>
+          <li><strong>6.</strong> Optional AI: set GEMINI_API_KEY or GROQ_API_KEY for the Intelligence Console; without keys the built-in engine answers from the mirror, honestly labeled.</li>
+        </ol>
       </Card>
     </div>
   );

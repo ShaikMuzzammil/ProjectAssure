@@ -52,13 +52,13 @@ export function canTouchProject(user: User | null, projectManager: string): bool
 }
 
 // Views visible per role (sidebar adapts).
-// v6 COMPACT: one flat sidebar of core features — no domain groups.
-// v23: Early Warnings / Budget Variance / Risk Scores promoted so the
-// dashboard KPI cards navigate to visible sidebar destinations.
+// v6 COMPACT: one flat sidebar of ~7 core features — no domain groups.
+// Deep screens (alerts, interventions, compare, analytics, simple-suite extras)
+// stay routable via in-screen links, the bell, ⌘K and the project cards.
 export const VIEWS_BY_ROLE: Record<UserRole, ViewId[]> = {
-  ADMIN: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help", "admin", "alerts", "budget-variance", "risk-score"],
-  PROJECT_MANAGER: ["monitor", "tracking", "geo-audit", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help", "alerts", "budget-variance", "risk-score"],
-  STAKEHOLDER: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "reports", "help", "alerts", "budget-variance", "risk-score"],
+  ADMIN: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help", "admin"],
+  PROJECT_MANAGER: ["monitor", "tracking", "geo-audit", "india-map", "projects", "ai-assistant", "model-lab", "reports", "email-center", "help"],
+  STAKEHOLDER: ["monitor", "tracking", "india-map", "projects", "ai-assistant", "reports", "help"],
   VIEWER: ["monitor", "india-map", "projects", "ai-assistant", "help"],
 };
 
