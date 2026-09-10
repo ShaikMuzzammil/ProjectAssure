@@ -27,7 +27,6 @@ export default function LoginView() {
   const login = useApp(s => s.login);
   const signUp = useApp(s => s.signUp);
   const goPage = useApp(s => s.goPage);
-  const dataMode = useApp(s => s.dataMode);
   const [tab, setTab] = useState<"signin" | "signup" | "forgot">("signin");
   const [persona, setPersona] = useState(USERS[0]);
   const [email, setEmail] = useState(USERS[0].email);
@@ -36,12 +35,6 @@ export default function LoginView() {
   const pick = (u: typeof USERS[0]) => {
     setPersona(u); setEmail(u.email); setPassword(u.password); setTab("signin");
   };
-
-  // v23.1 — detect simulation mode (no DATABASE_URL). In this mode, accounts
-  // are stored in this browser's localStorage only. They do NOT survive a
-  // cache clear or transfer to another device. The banner tells the user
-  // this so they know to set DATABASE_URL for cross-device persistence.
-  const isSimulation = dataMode?.mode === "simulation" || !dataMode?.databaseUrl;
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950">
@@ -187,14 +180,6 @@ export default function LoginView() {
                   ? "Enter your official email — we'll send a one-time reset link to your inbox."
                   : "Your own workspace — projects, documents, predictions and exports, stored per user."}
             </p>
-
-            {isSimulation ? (
-              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                <strong>Simulation mode:</strong> no <code className="font-mono">DATABASE_URL</code> is set — accounts are stored in this browser only.
-                To persist across devices and survive cache clears, set <code className="font-mono">DATABASE_URL</code> on Vercel (Neon/Supabase Postgres) and run <code className="font-mono">npx prisma db push</code>.
-                Demo personas (password <code className="font-mono">demo1234</code>) always work.
-              </div>
-            ) : null}
 
             <AnimatePresence mode="wait">
               {tab === "signin"
