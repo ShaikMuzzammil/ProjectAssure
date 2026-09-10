@@ -96,6 +96,11 @@ interface AppState {
   refreshAiStatus: () => Promise<void>;                                  // v11: probe /api/ai/status (cached server-side)
   aiActiveThreadId: string | null;                                       // v21: the thread the answer is written to (fixed: was hardcoded to threads[0])
   setActiveThread: (id: string) => void;
+  // v23 — pull registered users from the server DB on boot so accounts
+  // created on another device (or after a localStorage clear) are visible
+  // in this browser too. Without this, login would fail for any registered
+  // user that wasn't created in THIS browser.
+  syncUsersFromServer: () => Promise<{ ok: boolean; merged: number; error?: string }>;
   // v21: sync hub — the main app mirrors its live state to the server so the
   // Host Control platform can see users, projects, logins and alerts in real time
   lastSyncAt: string | null;
@@ -327,6 +332,12 @@ export const useApp = create<AppState>()(
         }
         // v11: probe the live intelligence service once per session
         void get().refreshAiStatus();
+        // v23 — pull registered users from the server-side DB so that accounts
+        // created on another device (or after a localStorage clear) are
+        // visible in this browser too. Without this, the client store would
+        // only know about the demo personas + accounts created in THIS
+        // browser, and login would fail for any registered user that wasn't.
+        void get().syncUsersFromServer();
         // v21: mirror state to the Sync Hub (Host Control reads it) and start
         // listening for Host broadcasts — a real bidirectional bridge.
         void get().syncNow(true);
@@ -369,13 +380,97 @@ export const useApp = create<AppState>()(
       },
 
       login: async (email, password) => {
-        const u = get().users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
+        const cleanEmail = email.trim().toLowerCase();
+        const u = get().users.find(x => x.email.toLowerCase() === cleanEmail);
+
+        // v23 — server-side fallback. Three cases trigger it:
+        //   1. The user isn't in the local store at all (e.g. account was
+        //      created on another device or after a localStorage clear and
+        //      syncUsersFromServer hasn't run yet, or /api/users returned 503).
+        //   2. The user has the `server::scrypt` sentinel hash (meaning the
+        //      real scrypt hash lives in the server DB, not the client store).
+        //   3. The local PBKDF2 verify fails — give the server a chance before
+        //      rejecting (the user may have changed their password via the
+        //      forgot-password flow, which only updates the server hash).
+        // In all three cases we POST to /api/auth/login and, on success,
+        // merge the returned user into the local store so future logins
+        // work without a round-trip.
+        let needsServerFallback = !u || u.passwordHash === "server::scrypt";
+        if (!needsServerFallback && u?.passwordHash) {
+          // Local PBKDF2 hash — verify locally first. If it fails, fall back
+          // to the server (the user may have reset their password).
+          const okPw = await verifyPassword(password, u.passwordHash);
+          if (!okPw) needsServerFallback = true;
+        }
+
+        if (needsServerFallback) {
+          try {
+            const res = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: cleanEmail, password }),
+            });
+            const data = (await res.json().catch(() => ({}))) as {
+              ok?: boolean;
+              user?: { id: string; name: string; email: string; role: UserRole; department?: string | null; designation?: string | null; avatarInitials?: string };
+              error?: string;
+              message?: string;
+            };
+            if (res.ok && data.ok && data.user) {
+              const su = data.user;
+              // Build / merge the user record into the local store so the
+              // next login can verify locally (until the server hash
+              // changes again via forgot-password).
+              const existing = get().users.find(x => x.email.toLowerCase() === su.email.toLowerCase());
+              const mergedUser: User = existing
+                ? { ...existing, name: su.name, role: su.role, designation: su.designation ?? existing.designation, lastLoginAt: new Date().toISOString(), isActive: true }
+                : {
+                    id: su.id,
+                    name: su.name,
+                    email: su.email,
+                    password: "••••••••",
+                    passwordHash: "server::scrypt",
+                    source: "registered",
+                    role: su.role,
+                    departmentId: su.department ? `dept-${su.department.toLowerCase()}` : "dept-ipmd",
+                    avatarInitials: su.avatarInitials ?? su.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
+                    designation: su.designation ?? "Registered member",
+                    persona: "Registered Member",
+                    personaDescription: "Synced from the server database — your account persists across devices.",
+                    isActive: true,
+                    lastLoginAt: new Date().toISOString(),
+                    createdAt: new Date().toISOString(),
+                  };
+              set(s => ({ users: s.users.some(x => x.email.toLowerCase() === su.email.toLowerCase()) ? s.users.map(x => x.email.toLowerCase() === su.email.toLowerCase() ? mergedUser : x) : [...s.users, mergedUser] }));
+              const stamp = new Date().toISOString();
+              set({ user: { ...mergedUser, lastLoginAt: stamp } });
+              get().audit("LOGIN", "Session", `Account login (server-side scrypt verify) for ${su.email} (${su.role}) · login event pushed to Host Control sync hub`, { entityId: su.id });
+              get().pushNotification({ userId: mergedUser.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")} (password verified by the server). If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
+              get().goPage("app");
+              void get().syncNow(true);
+              return { ok: true, user: { ...mergedUser, lastLoginAt: stamp } };
+            }
+            // Server login failed — fall through to the local error below
+            // (use the server's message if it gave one).
+            if (res.status !== 503 && data.error !== "SIMULATION_MODE") {
+              return { ok: false, error: data.message ?? data.error ?? "Invalid email or password." };
+            }
+          } catch {
+            /* network error — fall through to the local path */
+          }
+        }
+
+        // Local-only path (simulation mode OR a locally-hashed registered user)
         if (!u) return { ok: false, error: "No account found for this email — create one on the Create account tab." };
         if (!u.isActive) return { ok: false, error: "Account is deactivated. Contact your administrator." };
-        if (u.passwordHash) {
+        if (u.passwordHash && u.passwordHash !== "server::scrypt") {
           // registered account: real PBKDF2-SHA256 digest verification (100k iterations, salted)
           const okPw = await verifyPassword(password, u.passwordHash);
           if (!okPw) return { ok: false, error: "Incorrect password — PBKDF2 verification failed." };
+        } else if (u.passwordHash === "server::scrypt") {
+          // Should have been handled by the server fallback above. If we get
+          // here the server is unreachable or rejected the password.
+          return { ok: false, error: "Could not verify password — the server is unreachable. Try again in a moment." };
         } else if (password !== u.password) {
           return { ok: false, error: "Invalid demo password — persona passwords are shown on the persona card." };
         }
@@ -420,21 +515,65 @@ export const useApp = create<AppState>()(
         };
         set(s => ({ users: [...s.users, u] }));
 
-        // mirror the account to the cloud database when configured;
-        // simulation mode returns 503 silently and the local hashed record stands
+        // v23 — mirror the account to the cloud database when configured.
+        // On success, REPLACE the local PBKDF2 hash with the `server::scrypt`
+        // sentinel so future logins go through /api/auth/login (the server
+        // holds the canonical scrypt hash; the client never needs to verify
+        // the password locally for registered accounts). This is the fix for
+        // "accounts not storing" — even if the user clears localStorage or
+        // uses a different browser, the server DB is the source of truth
+        // and the next login will succeed via /api/auth/login.
+        //
+        // The route returns:
+        //   201 + { ok: true, mirrored: true }  → success, server is source of truth
+        //   503 + error: "SIMULATION_MODE"      → no DATABASE_URL, local hash stands (demo)
+        //   503 + error: "DB_UNAVAILABLE"       → real DB error (schema not migrated etc.)
+        //   409 + error: "CONFLICT_DUPLICATE"   → email already registered
+        //   422 + error: "VALIDATION_ERROR"     → invalid input
         let mirrored = false;
+        let mirrorError: string | null = null;
         try {
           const res = await fetch("/api/auth/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, email, password: form.password, role: u.role, departmentId: u.departmentId, designation: u.designation, phone: form.phone }),
           });
-          mirrored = res.ok;
-        } catch { /* offline / simulation — local account still works */ }
+          if (res.ok) {
+            mirrored = true;
+            // Replace the local PBKDF2 hash with the sentinel so future
+            // logins hit /api/auth/login. This way the server's scrypt hash
+            // is the single source of truth.
+            set(s => ({ users: s.users.map(x => x.id === u.id ? { ...x, passwordHash: "server::scrypt" } : x) }));
+          } else {
+            const err = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+            if (err.error === "SIMULATION_MODE") {
+              // expected when DATABASE_URL is not set — local hash stands.
+              // The user is still logged in and can use the app in demo mode.
+            } else if (err.error === "CONFLICT_DUPLICATE") {
+              // The email is already registered on the server — the local
+              // store's pre-check missed it (e.g. user cleared cache). Roll
+              // back the local add and tell the user to sign in instead.
+              set(s => ({ users: s.users.filter(x => x.id !== u.id) }));
+              return { ok: false, error: "An account with this email already exists on the server — switch to Sign in." };
+            } else {
+              // Real error (DB_UNAVAILABLE, VALIDATION_ERROR, etc.) — surface it.
+              mirrorError = err.message ?? err.error ?? `HTTP ${res.status}`;
+            }
+          }
+        } catch (err) {
+          mirrorError = (err as Error).message;
+        }
 
         const stamp = new Date().toISOString();
-        set({ user: { ...u, lastLoginAt: stamp } });
-        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt)" : "stored locally (demo mode)"} · auto-login`, { entityId: u.id });
+        set({ user: { ...u, lastLoginAt: stamp, passwordHash: mirrored ? "server::scrypt" : passwordHash } });
+        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt) — server is the source of truth" : "stored locally (demo mode)"} · auto-login${mirrorError ? ` · mirror error: ${mirrorError}` : ""}`, { entityId: u.id });
+        if (mirrorError) {
+          // v23 — surface DB errors so the user knows their account is NOT
+          // persisted server-side. They can still use the app in demo mode
+          // (local hash stands) but the next browser/device won't see this
+          // account until the DB issue is fixed (typically: run prisma db push).
+          toast.error("Account created locally, but server mirror failed", { description: mirrorError, duration: 8000 });
+        }
         get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. Create your first project to activate ML monitoring, upload documents and export reports.`, type: "SYSTEM", linkView: "projects" });
         // v21: new user → notify every ADMIN (they govern access) + sync to hub
         get().users.filter(x => x.role === "ADMIN" && x.id !== u.id).forEach(admin => {
@@ -1110,6 +1249,58 @@ export const useApp = create<AppState>()(
             try { localStorage.setItem("projectassure-ai-live", "1"); } catch { /* ignore */ }
           }
         } catch { /* offline — the built-in engine serves everything */ }
+      },
+
+      // v23 — fetch registered users from the server DB and merge them into
+      // the local store. Called from boot(). Idempotent: only adds users we
+      // don't already have (matched by email). Demo personas (source: "demo")
+      // are never overwritten. On Vercel this is what makes a registered
+      // account visible in a fresh browser, after a localStorage clear, or
+      // on a different device — the previous behaviour would silently drop
+      // them and login would fail with "no account found".
+      syncUsersFromServer: async () => {
+        if (typeof window === "undefined") return { ok: false, merged: 0, error: "server-only" };
+        try {
+          // v23 — use the public /api/users-list endpoint (no admin header
+          // required) so the boot path can always fetch the user list. The
+          // endpoint returns only non-sensitive fields (id, name, email,
+          // role, designation, isActive, lastLoginAt, department.code).
+          const res = await fetch("/api/users-list", { cache: "no-store" });
+          if (!res.ok) return { ok: false, merged: 0, error: `HTTP ${res.status}` };
+          const data = (await res.json()) as {
+            data?: Array<{ id: string; name: string; email: string; role: UserRole; designation?: string | null; isActive: boolean; lastLoginAt?: string | null; department?: { code: string } | null }>;
+          };
+          const remote = data.data ?? [];
+          if (!remote.length) return { ok: true, merged: 0 };
+          const existing = new Set(get().users.map(u => u.email.toLowerCase()));
+          const toAdd: User[] = [];
+          for (const r of remote) {
+            if (existing.has(r.email.toLowerCase())) continue;
+            toAdd.push({
+              id: r.id,
+              name: r.name,
+              email: r.email,
+              password: "••••••••",            // server holds the hash; the client never sees it
+              passwordHash: "server::scrypt",  // sentinel — verifyPassword() will recognise this and call /api/auth/login
+              source: "registered",
+              role: r.role,
+              departmentId: r.department?.code ? `dept-${r.department.code.toLowerCase()}` : "dept-ipmd",
+              avatarInitials: r.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
+              designation: r.designation ?? "Registered member",
+              persona: "Registered Member",
+              personaDescription: "Synced from the server database — your account persists across devices.",
+              isActive: r.isActive,
+              lastLoginAt: r.lastLoginAt ?? undefined,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          if (toAdd.length) {
+            set(s => ({ users: [...s.users, ...toAdd] }));
+          }
+          return { ok: true, merged: toAdd.length };
+        } catch (err) {
+          return { ok: false, merged: 0, error: (err as Error).message };
+        }
       },
 
       ask: async (question) => {

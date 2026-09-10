@@ -480,6 +480,48 @@ Plus the two top-level READMEs:
 
 ---
 
+## Account persistence — the v23 fix (important)
+
+Before v23, registered accounts could "disappear" after a browser cache clear, a
+different device, or a Vercel cold start. The root cause was a three-way mismatch
+between the client store, the server database, and the login flow.
+
+**The v23 fix:**
+
+1. **Sign-up mirrors to the DB and switches to a sentinel hash.** When `/api/auth/register`
+   returns 201, the client store replaces the local PBKDF2 hash with the
+   `server::scrypt` sentinel. This tells the login flow: "the real hash lives on
+   the server — call `/api/auth/login` to verify."
+
+2. **Login falls back to the server.** Three cases trigger a `/api/auth/login`
+   round-trip: (a) the user isn't in the local store at all, (b) the user has
+   the `server::scrypt` sentinel, or (c) the local PBKDF2 verify fails (the user
+   may have reset their password). On success, the user is merged into the
+   local store so future logins work without a round-trip.
+
+3. **Boot fetches registered users from the DB.** `syncUsersFromServer()` runs
+   once on boot, hits the public `/api/users-list` endpoint, and merges any
+   users we don't already have into the local store. This is what makes a
+   registered account visible in a fresh browser, after a cache clear, or on
+   a different device — even if the user never signed in there before.
+
+4. **Sign-up surfaces DB errors.** If the server returns `DB_UNAVAILABLE`
+   (typically: the Prisma schema hasn't been pushed and the `User` or
+   `PasswordResetToken` table is missing), the client store now shows a
+   clear toast: "Account created locally, but server mirror failed" with the
+   error message. The user can still use the app in demo mode (the local
+   hash stands), but they're not silently misled into thinking the account
+   is persisted server-side.
+
+**What this means for production:** set `DATABASE_URL` on the main Vercel
+project, run `npx prisma db push` once after the first deploy (or after any
+schema change — the v23 `PasswordResetToken` table is new), and registered
+accounts will survive every kind of reset. Without `DATABASE_URL`, the app
+runs in simulation mode (localStorage-only) — fine for the demo, but accounts
+are per-browser.
+
+---
+
 ## Environment variables
 
 ### Main app (`.env`)
