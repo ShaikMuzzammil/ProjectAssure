@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import {
   adminEmail,
   adminPassword,
@@ -13,7 +14,27 @@ import { audit, getStore, saveNow } from "@/lib/host/store";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/auth/login — real host login with IP lockout + audit.
+// v23 — POST /api/auth/login — real host login with IP lockout + audit.
+// The "current" password to verify against:
+//   1. if the host store has a stored hash for this admin (set by
+//      /api/admin/auth/change-password), verify against it
+//   2. otherwise → verify against the env var (HOST_ADMIN_PASSWORD)
+// This way the in-app "Change password" actually takes effect immediately.
+// On Vercel the env var wins for the FIRST login after a cold start (the
+// stored hash is per-lambda-instance); the admin is told to update the env
+// var for permanent change in the Settings panel.
+
+const HOST_USER_KEY = "__hostAdminPasswordHash";
+
+function verifyStored(pw: string, stored: string): boolean {
+  const parts = stored.split("$");
+  if (parts.length !== 3 || parts[0] !== "sha256") return false;
+  const salt = parts[1];
+  const known = parts[2];
+  const test = createHash("sha256").update(`${salt}::${pw}::projectassure-host`).digest("hex");
+  return test === known;
+}
+
 export async function POST(req: Request) {
   let payload: { email?: string; password?: string };
   try {
@@ -40,16 +61,25 @@ export async function POST(req: Request) {
   }
 
   const expectedEmail = adminEmail();
-  const expectedPassword = adminPassword();
+  const envPassword = adminPassword();
   const emailOk = email === expectedEmail;
-  const passwordOk = password === expectedPassword;
+
+  // v23 — check the stored hash first (set by /api/admin/auth/change-password).
+  // If no stored hash, fall back to the env var.
+  const store = getStore();
+  const stored = (store as unknown as { [k: string]: unknown })[HOST_USER_KEY] as string | undefined;
+  let passwordOk: boolean;
+  if (stored && stored.startsWith("sha256$")) {
+    passwordOk = verifyStored(password, stored);
+  } else {
+    passwordOk = password === envPassword;
+  }
 
   if (emailOk && passwordOk) {
     clearFailures(ip);
     const token = signSessionToken(expectedEmail);
-    audit("auth.login.success", expectedEmail, `host administrator signed in from IP ${ip}`, "success");
+    audit("auth.login.success", expectedEmail, `host administrator signed in from IP ${ip}${stored ? " (using stored hash from /api/admin/auth/change-password)" : " (using env var)"}`, "success");
     saveNow();
-    getStore(); // ensure singleton initialized
     const res = NextResponse.json({ ok: true, email: expectedEmail });
     res.headers.set("Set-Cookie", sessionCookieHeader(token));
     return res;

@@ -27,7 +27,8 @@ export default function LoginView() {
   const login = useApp(s => s.login);
   const signUp = useApp(s => s.signUp);
   const goPage = useApp(s => s.goPage);
-  const [tab, setTab] = useState<"signin" | "signup">("signin");
+  const dataMode = useApp(s => s.dataMode);
+  const [tab, setTab] = useState<"signin" | "signup" | "forgot">("signin");
   const [persona, setPersona] = useState(USERS[0]);
   const [email, setEmail] = useState(USERS[0].email);
   const [password, setPassword] = useState(USERS[0].password);
@@ -35,6 +36,12 @@ export default function LoginView() {
   const pick = (u: typeof USERS[0]) => {
     setPersona(u); setEmail(u.email); setPassword(u.password); setTab("signin");
   };
+
+  // v23.1 — detect simulation mode (no DATABASE_URL). In this mode, accounts
+  // are stored in this browser's localStorage only. They do NOT survive a
+  // cache clear or transfer to another device. The banner tells the user
+  // this so they know to set DATABASE_URL for cross-device persistence.
+  const isSimulation = dataMode?.mode === "simulation" || !dataMode?.databaseUrl;
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950">
@@ -172,19 +179,33 @@ export default function LoginView() {
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
             className="rounded-2xl border border-slate-200/80 bg-card p-7 shadow-2xl shadow-slate-300/50 dark:border-slate-800 dark:shadow-black/40">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0c93e7]">Smart India Hackathon 2026 · SIH26103</div>
-            <h2 className="text-[19px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : "Create your account"}</h2>
+            <h2 className="text-[19px] font-bold tracking-tight">{tab === "signin" ? "Sign in to ProjectAssure" : tab === "forgot" ? "Recover your account" : "Create your account"}</h2>
             <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
               {tab === "signin"
                 ? "Secure access. Pick a persona on the left, or sign in with your registered email."
-                : "Your own workspace — projects, documents, predictions and exports, stored per user."}
+                : tab === "forgot"
+                  ? "Enter your official email — we'll send a one-time reset link to your inbox."
+                  : "Your own workspace — projects, documents, predictions and exports, stored per user."}
             </p>
+
+            {isSimulation ? (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                <strong>Simulation mode:</strong> no <code className="font-mono">DATABASE_URL</code> is set — accounts are stored in this browser only.
+                To persist across devices and survive cache clears, set <code className="font-mono">DATABASE_URL</code> on Vercel (Neon/Supabase Postgres) and run <code className="font-mono">npx prisma db push</code>.
+                Demo personas (password <code className="font-mono">demo1234</code>) always work.
+              </div>
+            ) : null}
 
             <AnimatePresence mode="wait">
               {tab === "signin"
                 ? <motion.div key="signin" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} transition={{ duration: 0.16 }}>
                   <SignInPanel login={login} email={email} password={password} setEmail={setEmail} setPassword={setPassword}
-                    persona={persona} switchToSignUp={() => setTab("signup")} goPage={goPage} />
+                    persona={persona} switchToSignUp={() => setTab("signup")} goPage={goPage} goForgot={() => setTab("forgot")} />
                 </motion.div>
+                : tab === "forgot"
+                  ? <motion.div key="forgot" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
+                    <ForgotInlinePanel goSignIn={() => setTab("signin")} />
+                  </motion.div>
                 : <motion.div key="signup" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
                   <SignUpPanel signUp={signUp} switchToSignIn={() => setTab("signin")} />
                 </motion.div>}
@@ -202,10 +223,10 @@ export default function LoginView() {
 }
 
 // ─── Sign in (persona prefill + registered accounts) ───────────────────────
-function SignInPanel({ login, email, password, setEmail, setPassword, persona, switchToSignUp, goPage }: {
+function SignInPanel({ login, email, password, setEmail, setPassword, persona, switchToSignUp, goPage, goForgot }: {
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string; user?: { name: string; role: string } }>;
   email: string; password: string; setEmail: (v: string) => void; setPassword: (v: string) => void;
-  persona: typeof USERS[0]; switchToSignUp: () => void; goPage: (p: "landing") => void;
+  persona: typeof USERS[0]; switchToSignUp: () => void; goPage: (p: "landing") => void; goForgot: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -241,7 +262,12 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
           </div>
         </div>
         <div>
-          <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Password</label>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="block text-[11px] font-semibold text-muted-foreground">Password</label>
+            <button type="button" onClick={goForgot} className="text-[11px] font-medium text-[#0c93e7] hover:underline">
+              Forgot password?
+            </button>
+          </div>
           <div className="relative">
             <input value={password} onChange={e => setPassword(e.target.value)} type="password" required autoComplete="current-password"
               className="h-10.5 w-full rounded-lg border bg-background pl-9 pr-9 font-mono text-[13px] outline-none transition focus:border-[#0c93e7] focus:ring-2 focus:ring-[#0c93e7]/20" />
@@ -266,6 +292,77 @@ function SignInPanel({ login, email, password, setEmail, setPassword, persona, s
         </div>
       </form>
     </div>
+  );
+}
+
+// ─── Forgot password (inline on the sign-in card) ─────────────────────────
+function ForgotInlinePanel({ goSignIn }: { goSignIn: () => void }) {
+  const requestPasswordReset = useApp(s => s.requestPasswordReset);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ sent: boolean; simulated: boolean; message: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy) return;
+    setBusy(true); setError(null);
+    const res = await requestPasswordReset(email);
+    setBusy(false);
+    if (res.ok) {
+      setDone({ sent: res.sent, simulated: res.simulated, message: res.message ?? "Reset link sent." });
+      toast.success("Reset link requested", { description: res.message });
+    } else {
+      setError(res.error ?? "Could not request a reset link.");
+      toast.error("Could not request reset", { description: res.error });
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-medium text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">{done.message}</p>
+              <p className="mt-1 text-[11px] font-normal text-emerald-700/90 dark:text-emerald-300/80">
+                {done.simulated && !done.sent
+                  ? "Demo mode: the reset link is recorded in the audit log (no email provider is configured). Set DATABASE_URL + an SMTP/Brevo key in production to email the link automatically."
+                  : "Check your inbox (and spam folder) for an email from ProjectAssure. Click the link, enter a new password, and sign in."}
+              </p>
+            </div>
+          </div>
+        </div>
+        <button onClick={goSignIn} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-[13px] font-semibold transition hover:bg-muted">
+          <ArrowLeft className="h-4 w-4" /> Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-3.5">
+      <div>
+        <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Official email</label>
+        <div className="relative">
+          <Mail className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required autoFocus placeholder="you@organisation.gov.in"
+            className="h-10.5 w-full rounded-lg border bg-background pl-9 text-[13px] outline-none transition focus:border-[#0c93e7] focus:ring-2 focus:ring-[#0c93e7]/20" />
+        </div>
+      </div>
+      {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
+      <button type="submit" disabled={busy || !email}
+        className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] text-[14px] font-semibold text-white shadow-md shadow-[#0284c7]/25 transition hover:bg-[#0369a1] disabled:opacity-70">
+        {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending…</> : <><KeyRound className="h-4 w-4" /> Send reset link</>}
+      </button>
+      <button type="button" onClick={goSignIn} className="w-full text-center text-[11.5px] font-medium text-muted-foreground transition hover:text-foreground">
+        ← Back to sign in
+      </button>
+      <p className="text-center text-[10px] leading-relaxed text-muted-foreground">
+        We never reveal which emails are registered. The link is single-use and expires in 60 minutes.
+      </p>
+    </form>
   );
 }
 

@@ -16,6 +16,7 @@ interface SettingsResponse {
   settings: { mainUrlOverride: string | null; loginAlerts: boolean; budgetAlerts: boolean; budgetThresholdPct: number };
   mainUrl: string;
   env: EnvCheckItem[];
+  persistence?: { mode: string; warning: string };
   providers: { email: string; ai: { gemini: boolean; groq: boolean; sandboxSdk: boolean; builtinFallback: boolean } };
 }
 
@@ -54,9 +55,20 @@ export function IntegrationsView({ state, refresh }: ViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mainUrlOverride: urlDraft.trim() }),
       });
-      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; hint?: string; mainUrl?: string };
+      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; hint?: string; mainUrl?: string; changed?: boolean; note?: string; persistence?: string };
       if (res.ok && d.ok) {
-        toast.success("Main app URL saved", { description: `effective URL → ${d.mainUrl ?? urlDraft}` });
+        // v23 — be honest about whether a change actually happened. When the
+        // sent value matched what was already stored, the API returns
+        // changed:false and a note explaining the no-op. We surface that in
+        // the toast so the user understands "Save" wasn't broken — there was
+        // nothing new to persist.
+        if (d.changed === false) {
+          toast.info("No change to save", { description: d.note ?? "The value matched the stored setting." });
+        } else {
+          toast.success("Main app URL saved", {
+            description: `effective URL → ${d.mainUrl ?? urlDraft}${d.persistence ? ` · ${d.persistence}` : ""}`,
+          });
+        }
         setUrlEdit(null); // back to mirror-driven value
         await Promise.all([load(), refresh(true)]);
       } else {
@@ -143,6 +155,12 @@ export function IntegrationsView({ state, refresh }: ViewProps) {
               In dev the main app runs on http://localhost:3000. In production set MAIN_PROJECT_URL to its Vercel URL. The last poll state:{" "}
               <span className="font-semibold">{state.sync.mainReachable ? "reachable" : "unreachable"}</span> · last sync {state.sync.lastSyncAt ?? "—"}.
             </p>
+            {data?.persistence ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[10.5px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                <p className="font-semibold">Persistence · {data.persistence.mode}</p>
+                <p className="mt-0.5">{data.persistence.warning}</p>
+              </div>
+            ) : null}
           </div>
         </Card>
 

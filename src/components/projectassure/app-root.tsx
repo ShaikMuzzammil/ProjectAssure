@@ -9,6 +9,8 @@ import LoginView from "./auth/login-view";
 import AppShell from "./shell/app-shell";
 import DemoView from "./auth/demo-view";
 import PublicView from "./public/public-view";
+import ForgotPasswordView from "./auth/forgot-password-view";
+import ResetPasswordView from "./auth/reset-password-view";
 
 export default function AppRoot() {
   const boot = useApp(s => s.boot);
@@ -35,7 +37,7 @@ export default function AppRoot() {
     return () => clearInterval(t);
   }, [user, syncNow]);
 
-  // Guard: app pages require auth. #/demo and #/public stay open to everyone.
+  // Guard: app pages require auth. #/demo, #/public, #/forgot, #/reset stay open to everyone.
   const page = route.page === "app" && !user ? "login" : route.page;
 
   return (
@@ -45,6 +47,8 @@ export default function AppRoot() {
       {page === "login" && <LoginView />}
       {page === "demo" && <DemoView />}
       {page === "public" && <PublicView />}
+      {page === "forgot" && <ForgotPasswordView />}
+      {page === "reset" && <ResetPasswordView token={route.resetToken ?? ""} />}
       {page === "app" && <AppShell portal={route.portal} />}
     </div>
   );

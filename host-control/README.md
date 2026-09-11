@@ -38,13 +38,14 @@ portfolio. It is a **separate** Next.js 16 app that runs on its own Vercel proje
 project, alert, event, email and login. It then layers real host-only actions
 on top of that mirror:
 
-- **Approvals** — derived from real new items (new projects, new accounts, budget breaches) — each one notify-able to the user
+- **Approvals** — derived from real new items (new projects, new accounts, budget breaches) — each one notify-able to the user. v23 adds **reject-with-action**: the admin picks what happens to the entity (notify-only / cancel project / disband account / freeze budget), each delivered as a real `host-message` webhook.
 - **Broadcasts** — push an alert to every main-app user (lands as a real toast + notification within ~20 s)
 - **Direct user actions** — restrict / restore access, role change, direct alert, direct email — each one notifies the user for real
-- **Automated emails** — login / budget-breach / welcome automations run server-side through a provider chain with an honest SIMULATED fallback
-- **Audit** — append-only, searchable; every action recorded with who/when/what
-- **Intelligence Console** — a host-side AI chat grounded on the live mirror (Gemini → Groq → sandbox SDK → built-in engine)
+- **Automated emails** — login / budget-breach / welcome automations run server-side through a provider chain with an honest SIMULATED fallback. v23 adds a `disband` email kind for account-rejection notices.
+- **Audit** — append-only, searchable; every action recorded with who/when/what. v23 captures password changes, account disbands, budget freezes, and reject-action delivery state.
+- **Intelligence Console** — a host-side AI chat grounded on the live mirror (Gemini → Groq → sandbox SDK → built-in engine). v23 probes each provider for real before reporting `ready` (the badge now matches reality).
 - **CSV / JSON export** — every list view exports to CSV; the audit + outbox also export to JSON
+- **Settings** (v23) — login/budget email toggles, budget breach threshold slider, **host admin password change** (stored hash, in dev persists to `.host-store.json`), persistence mode note, session card with sign-out.
 
 > The mirror fills within ~5 s of a change happening on the main app. The host
 > never owns data — it only reflects it and acts on it.
@@ -71,22 +72,23 @@ main-app data from host-control mirror data.
 
 ---
 
-## The nine panels
+## The ten panels
 
-The shell sidebar (`src/components/host/shell.tsx`) exposes nine views —
-the same nine appear in the **landing page's Host Control dropdown** (v23):
+The shell sidebar (`src/components/host/shell.tsx`) exposes ten views —
+the same nine plus the new **Settings** panel added in v23.
 
 | # | Panel | What it shows |
 |---|---|---|
 | 1 | **Mission Dashboard** (`#/dashboard`) | KPI grid · health bands chart · at-risk list · live activity feed · sync card |
 | 2 | **User Management** (`#/users`) | Sortable + filterable grid · per-user drawer (profile / security / projects / alerts / activity) · actions: restrict / restore / role-change / direct-alert / direct-email |
 | 3 | **Projects Control** (`#/projects`) | Full grid · ₹Cr budgets · overrun % · milestones · detail drawer · CSV export |
-| 4 | **Approvals Centre** (`#/approvals`) | Real derived items (new projects / new accounts / budget breaches) · decisions · owner notifications |
+| 4 | **Approvals Centre** (`#/approvals`) | Real derived items (new projects / new accounts / budget breaches) · decisions · owner notifications · **v23 reject-with-action** (notify-only / cancel project / disband account / freeze budget) |
 | 5 | **Alerts & Broadcast** (`#/alerts`) | Mirrored alert feed · broadcast (all users) · direct user alerts |
 | 6 | **Email Outbox** (`#/outbox`) | Login / budget / welcome automations · provider chain (SMTP → Brevo → Resend → SIMULATED) · full log |
-| 7 | **Audit Trail** (`#/audit`) | Append-only · searchable · every action (login attempts, decisions, broadcasts, emails) |
-| 8 | **Intelligence** (`#/intelligence`) | AI chat grounded on the live mirror · Gemini → Groq → sandbox SDK → built-in engine |
-| 9 | **Integrations** (`#/integrations`) | URL config + test · env checklist · step-by-step setup guide |
+| 7 | **Audit Trail** (`#/audit`) | Append-only · searchable · every action (login attempts, decisions, broadcasts, emails, password changes, account disbands) |
+| 8 | **Intelligence** (`#/intelligence`) | AI chat grounded on the live mirror · Gemini → Groq → sandbox SDK → built-in engine · **v23 honest probe** (the badge shows `live` only when at least one provider actually answered) |
+| 9 | **Integrations** (`#/integrations`) | URL config + test · env checklist · **v23 honest persistence note** (in-memory per lambda on Vercel, JSON file in dev) |
+| 10 | **Settings** (`#/settings`) | **v23 NEW** · login/budget email toggle · budget breach threshold slider · host admin password change · persistence mode · session card with sign-out |
 
 Each panel is a single component under `src/components/host/*-view.tsx` and is
 wired to the global store through `use-host-data.ts` (5-second polling).

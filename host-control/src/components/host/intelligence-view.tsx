@@ -3,6 +3,11 @@
 // Intelligence Console — AI chat grounded on the LIVE host mirror
 // (users/projects/approvals/outbox stats). Provider chain on the server:
 // Gemini REST → Groq → sandbox SDK → built-in deterministic engine (honest).
+//
+// v23: the side panel now reports the HONEST state — `live` is true only when
+// at least one provider passed the actual probe (not just configured). The
+// chat footer is also clearer: a fallback answer is labeled as such with
+// the actual reason, not just "live intelligence is not connected".
 
 import { useEffect, useRef, useState } from "react";
 import { BrainCircuit, Cpu, Send, Sparkles, User } from "lucide-react";
@@ -16,13 +21,21 @@ interface ChatMessage {
   content: string;
   provider?: string;
   model?: string;
+  mode?: string;
   note?: string;
   at: string;
 }
 
+interface AiStatusProvider {
+  name: string;
+  label: string;
+  configured: boolean;
+  ready: boolean;
+}
 interface AiStatus {
   ok: boolean;
-  providers: { name: string; label: string; configured: boolean }[];
+  live: boolean;
+  providers: AiStatusProvider[];
 }
 
 const SUGGESTIONS = [
@@ -70,11 +83,11 @@ export function IntelligenceView({ state }: ViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: trimmed, history }),
       });
-      const data = (await res.json().catch(() => ({}))) as { answer?: string; provider?: string; model?: string; note?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as { answer?: string; provider?: string; model?: string; mode?: string; note?: string; error?: string };
       if (res.ok && data.answer) {
         setMessages((m) => [
           ...m,
-          { id: crypto.randomUUID(), role: "assistant", content: data.answer!, provider: data.provider, model: data.model, note: data.note, at: new Date().toISOString() },
+          { id: crypto.randomUUID(), role: "assistant", content: data.answer!, provider: data.provider, model: data.model, mode: data.mode, note: data.note, at: new Date().toISOString() },
         ]);
       } else {
         toast.error("Intelligence unavailable", { description: data.error ?? `HTTP ${res.status}` });
@@ -100,7 +113,15 @@ export function IntelligenceView({ state }: ViewProps) {
             title="Assure Intelligence · host mode"
             subtitle="grounded answers, short and decidable"
             icon={<BrainCircuit className="h-4 w-4" />}
-            right={busy ? <Badge tone="sky">thinking…</Badge> : <Badge tone="green">ready</Badge>}
+            right={
+              busy ? (
+                <Badge tone="sky">thinking…</Badge>
+              ) : status?.live ? (
+                <Badge tone="green">live · {liveProviderName(status)}</Badge>
+              ) : (
+                <Badge tone="amber">deterministic engine</Badge>
+              )
+            }
           />
 
           <div ref={scrollRef} className="host-scroll min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950">
@@ -111,6 +132,7 @@ export function IntelligenceView({ state }: ViewProps) {
                 </div>
                 <p className="max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                   Numbers come only from the live mirror — nothing is invented. Try one of the prompts below or ask anything about the platform.
+                  {status?.live ? " Live AI is connected; you'll get full language answers." : " No live AI key is configured, so the built-in deterministic engine answers from the mirror — honestly labeled."}
                 </p>
               </div>
             ) : (
@@ -135,7 +157,7 @@ export function IntelligenceView({ state }: ViewProps) {
                       </p>
                     ) : null}
                     {m.note ? (
-                      <p className="mt-1 text-[10px] italic leading-relaxed text-amber-600 dark:text-amber-400">{m.note}</p>
+                      <p className="mt-1 text-[10px] italic leading-relaxed text-amber-700 dark:text-amber-300">{m.note}</p>
                     ) : null}
                   </div>
                   {m.role === "user" ? (
@@ -193,17 +215,24 @@ export function IntelligenceView({ state }: ViewProps) {
                   <p className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-200">{p.name}</p>
                   <p className="truncate text-[10px] text-slate-400">{p.label}</p>
                 </div>
-                <Badge tone={p.configured ? "green" : "slate"}>{p.configured ? "ready" : "unset"}</Badge>
+                <Badge tone={p.ready ? "green" : p.configured ? "amber" : "slate"}>
+                  {p.ready ? "ready" : p.configured ? "configured" : "unset"}
+                </Badge>
               </div>
             ))}
             <p className="pt-1 text-[10px] leading-relaxed text-slate-400">
-              Add GEMINI_API_KEY (free, Google AI Studio) or GROQ_API_KEY (free) to the host env for full language answers. Without them the built-in engine answers deterministically from the mirror — labeled honestly.
+              Add GEMINI_API_KEY (free, Google AI Studio) or GROQ_API_KEY (free) to the host env for full language answers. Without them the built-in engine answers deterministically from the mirror — labeled honestly. v23: the badge shows “ready” only when the provider actually answered a probe, not just when its env var is set.
             </p>
           </div>
         </Card>
       </div>
     </div>
   );
+}
+
+function liveProviderName(status: AiStatus): string {
+  const ready = status.providers.find((p) => p.ready && p.name !== "builtin");
+  return ready ? ready.name : "built-in";
 }
 
 /** Tiny markdown-lite: **bold**, *italic*, line breaks. Data is escaped. */
@@ -224,3 +253,4 @@ function Markdownish({ text }: { text: string }) {
     </div>
   );
 }
+

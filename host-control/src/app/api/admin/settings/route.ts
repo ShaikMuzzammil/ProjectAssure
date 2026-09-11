@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireHost } from "@/lib/host/auth";
-import { audit, getStore, saveNow } from "@/lib/host/store";
+import { audit, getStore, saveNow, IS_VERCEL } from "@/lib/host/store";
 import { effectiveMainUrl, envChecklist, testMainConnection } from "@/lib/host/sync";
 import { emailProviderLabel } from "@/lib/host/mailer";
 
@@ -16,6 +16,12 @@ export async function GET(req: Request) {
     settings: getStore().data.settings,
     mainUrl: effectiveMainUrl(),
     env: envChecklist(),
+    persistence: {
+      mode: IS_VERCEL ? "in-memory (Vercel — read-only FS)" : "JSON file (.host-store.json)",
+      warning: IS_VERCEL
+        ? "On Vercel, settings changes survive within the life of the current lambda instance. To persist them across cold starts, set MAIN_PROJECT_URL in the Vercel env vars and leave the override field empty."
+        : "Settings are persisted to .host-store.json (gitignored).",
+    },
     providers: {
       email: emailProviderLabel(),
       ai: {
@@ -99,10 +105,30 @@ export async function POST(req: Request) {
   }
 
   if (changes.length === 0) {
-    return NextResponse.json({ ok: true, changed: false, settings: d.settings });
+    // v23 — be explicit: the value the user sent matches what was already stored.
+    // This is the most common reason "save" appears to do nothing. The UI
+    // explains the persistence mode so the user knows whether the change will
+    // survive a cold start.
+    return NextResponse.json({
+      ok: true,
+      changed: false,
+      settings: d.settings,
+      mainUrl: effectiveMainUrl(),
+      note: IS_VERCEL
+        ? "No change — the value matched the stored setting. On Vercel, settings live in memory per lambda instance. Use the env var (MAIN_PROJECT_URL) for cross-instance persistence."
+        : "No change — the value matched the stored setting.",
+    });
   }
 
   audit("settings.updated", actor, changes.join(" · "), "info");
   saveNow();
-  return NextResponse.json({ ok: true, changed: true, settings: d.settings, mainUrl: effectiveMainUrl() });
+  return NextResponse.json({
+    ok: true,
+    changed: true,
+    settings: d.settings,
+    mainUrl: effectiveMainUrl(),
+    persistence: IS_VERCEL
+      ? "saved in-memory for this lambda instance — set MAIN_PROJECT_URL in Vercel env for cross-instance persistence"
+      : "persisted to .host-store.json",
+  });
 }

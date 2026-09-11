@@ -55,6 +55,7 @@ model User {
   notifications Notification[]
   documents    Document[]
   auditLogs    AuditLog[]
+  passwordResetTokens PasswordResetToken[]
   @@index([departmentId])
   @@index([role])
 }
@@ -308,7 +309,7 @@ model Document {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD
+  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD|PASSWORD_RESET|ACCOUNT_DISBAND
   entity    String
   entityId  String?
   details   String
@@ -324,4 +325,20 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([projectId])
   @@index([createdAt])
+}
+
+// v23: password reset tokens — issued by /api/auth/request-reset, consumed by
+// /api/auth/reset-password. Single-use, 1-hour expiry, scoped to one user.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique // 32-byte hex
+  expiresAt DateTime
+  usedAt    DateTime?
+  ipIssued  String?
+  ipUsed    String?
+  createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([expiresAt])
 }
