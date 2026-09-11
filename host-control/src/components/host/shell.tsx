@@ -18,7 +18,6 @@ import {
   Radio,
   RefreshCw,
   ScrollText,
-  Settings,
   ShieldCheck,
   Sun,
   Users,
@@ -40,7 +39,6 @@ import { OutboxView } from "./outbox-view";
 import { AuditView } from "./audit-view";
 import { IntelligenceView } from "./intelligence-view";
 import { IntegrationsView } from "./integrations-view";
-import { SettingsView } from "./settings-view";
 
 export type ViewId =
   | "dashboard"
@@ -51,8 +49,7 @@ export type ViewId =
   | "outbox"
   | "audit"
   | "intelligence"
-  | "integrations"
-  | "settings";
+  | "integrations";
 
 const NAV: { id: ViewId; label: string; icon: React.ComponentType<{ className?: string }>; title: string }[] = [
   { id: "dashboard", label: "Mission Dashboard", icon: LayoutDashboard, title: "Mission Dashboard" },
@@ -64,7 +61,6 @@ const NAV: { id: ViewId; label: string; icon: React.ComponentType<{ className?: 
   { id: "audit", label: "Audit Trail", icon: ScrollText, title: "Audit Trail" },
   { id: "intelligence", label: "Intelligence", icon: BrainCircuit, title: "Intelligence Console" },
   { id: "integrations", label: "Integrations", icon: PlugZap, title: "Integrations & Setup" },
-  { id: "settings", label: "Settings", icon: Settings, title: "Host Settings" },
 ];
 
 export interface ShellProps {
@@ -236,7 +232,6 @@ export function Shell({ state, loading, error, refreshing, refresh, onLogout }: 
                 {view === "audit" ? <AuditView state={state} refresh={refresh} /> : null}
                 {view === "intelligence" ? <IntelligenceView state={state} refresh={refresh} /> : null}
                 {view === "integrations" ? <IntegrationsView state={state} refresh={refresh} /> : null}
-                {view === "settings" ? <SettingsView state={state} refresh={refresh} onLogout={onLogout} /> : null}
               </motion.div>
             </AnimatePresence>
           )}

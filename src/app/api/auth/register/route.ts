@@ -66,18 +66,6 @@ export async function POST(req: Request) {
       security: { hash: "scrypt (N=16384, r=8, p=1, 64-byte)", stored: "secure cloud database", plaintext: "never" },
     }, { status: 201 });
   } catch (err) {
-    // v23 — if we got here, DATABASE_URL was set (the early return above
-    // handled the simulation-mode case). So this is a REAL DB error — most
-    // commonly: the schema hasn't been migrated and the User table doesn't
-    // exist yet, or the PasswordResetToken table is missing. Surface a
-    // helpful message so the user knows to run `npx prisma db push`.
-    const msg = (err as Error).message.slice(0, 200);
-    const hint = /does not exist|no such table|relation .* does not exist/i.test(msg)
-      ? "Run `npx prisma db push` to apply the latest schema (the PasswordResetToken table was added in v23)."
-      : "Check DATABASE_URL connectivity and that the Prisma schema has been pushed to the database.";
-    return NextResponse.json({
-      error: "DB_UNAVAILABLE",
-      message: `Database error: ${msg}. ${hint}`,
-    }, { status: 503 });
+    return NextResponse.json({ error: "DB_UNAVAILABLE", message: (err as Error).message.slice(0, 160) }, { status: 503 });
   }
 }

@@ -136,7 +136,7 @@ export interface HostAuditEntry {
 }
 
 export type EmailStatus = "SENT" | "SIMULATED" | "FAILED";
-export type EmailKind = "manual" | "login" | "budget" | "welcome" | "admin" | "disband";
+export type EmailKind = "manual" | "login" | "budget" | "welcome" | "admin";
 
 export interface EmailLogEntry {
   id: string;
@@ -150,15 +150,6 @@ export interface EmailLogEntry {
 }
 
 export type ApprovalKind = "project-activation" | "account-access" | "budget-escalation";
-
-// v23 — reject actions: when the host rejects an approval, the admin picks
-// what should happen to the underlying entity. Each kind has its own set of
-// allowed actions; the API validates against this union.
-export type RejectAction =
-  | "notify-only"            // reject the approval but the entity stays untouched (the old default)
-  | "reject-project"         // project-activation: cancel the project in the main app (sends a webhook)
-  | "disband-account"        // account-access: deactivate the user's account in the main app + block future logins
-  | "block-budget";          // budget-escalation: freeze further spend on the project (sends a webhook)
 
 export interface ApprovalItem {
   id: string;
@@ -175,13 +166,6 @@ export interface ApprovalItem {
   decidedAt?: string;
   decidedBy?: string;
   note?: string;
-  // v23: when status === "rejected", the action that was taken on the entity
-  rejectAction?: RejectAction;
-  // v23: when status === "rejected" and rejectAction != "notify-only", did
-  // the main-app webhook succeed? used by the Approvals Centre UI to show
-  // honest delivery state.
-  rejectActionDelivered?: boolean;
-  rejectActionNote?: string;
 }
 
 export interface BroadcastRecord {

@@ -65,13 +65,7 @@ export interface WebhookOutcome {
 
 export async function postCommandToMain(
   payload: {
-    // v23 — "host-message" is the structured action channel used by the
-    // Approvals Centre's reject-with-action path (cancel project / disband
-    // account / freeze budget). It is accepted by the main app's webhook
-    // route (already in the allowed list there) and parsed by the client
-    // store's applyHostCommands to apply the side effect on the user's
-    // workspace.
-    kind: "broadcast" | "user-alert" | "announce" | "request-sync" | "host-message";
+    kind: "broadcast" | "user-alert" | "announce" | "request-sync";
     title: string;
     message: string;
     severity: Severity;

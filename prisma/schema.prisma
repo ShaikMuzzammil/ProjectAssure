@@ -55,7 +55,6 @@ model User {
   notifications Notification[]
   documents    Document[]
   auditLogs    AuditLog[]
-  passwordResetTokens PasswordResetToken[]
   @@index([departmentId])
   @@index([role])
 }
@@ -309,7 +308,7 @@ model Document {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD|PASSWORD_RESET|ACCOUNT_DISBAND
+  action    String   // CREATE|UPDATE|DELETE|LOGIN|LOGOUT|EXPORT|AI_ACCEPT|AI_OVERRIDE|ALERT_ACK|EMAIL_SEND|PREDICTION_RUN|MODEL_RETRAIN|SETTINGS|UPLOAD
   entity    String
   entityId  String?
   details   String
@@ -325,25 +324,4 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([projectId])
   @@index([createdAt])
-}
-
-// v23: password reset tokens — issued by /api/auth/request-reset, consumed by
-// /api/auth/reset-password. Tokens are single-use, expire in 1 hour, and are
-// scoped to one user. The same model also stores approval decisions: when the
-// Host Control rejects an account and chooses "disband account entirely",
-// a record here with action="ACCOUNT_DISBAND" tells /api/auth/login to refuse
-// the login (the User.isActive flag is also flipped to false by the host
-// sync webhook).
-model PasswordResetToken {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String   @unique // 32-byte hex
-  expiresAt DateTime
-  usedAt    DateTime?
-  ipIssued  String?
-  ipUsed    String?
-  createdAt DateTime @default(now())
-  @@index([userId])
-  @@index([expiresAt])
 }

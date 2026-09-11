@@ -30,10 +30,7 @@ import type {
 
 const STORE_VERSION = 21;
 const PERSIST_PATH = path.join(process.cwd(), ".host-store.json");
-// v23 — exported so the settings route can tell the UI honestly whether
-// changes will survive a cold start. On Vercel (read-only FS), the store
-// lives in memory per lambda instance.
-export const IS_VERCEL = process.env.VERCEL === "1" || Boolean(process.env.VERCEL);
+const IS_VERCEL = process.env.VERCEL === "1" || Boolean(process.env.VERCEL);
 
 const AUDIT_CAP = 600;
 const OUTBOX_CAP = 400;

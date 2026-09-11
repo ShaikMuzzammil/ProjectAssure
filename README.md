@@ -96,17 +96,15 @@ URL for the central programme office.
 │   /#/dashboard         Mission KPIs + health bands      │
 │   /#/users             User management                  │
 │   /#/projects          Projects control                  │
-│   /#/approvals         Approvals + reject actions (v23)  │
+│   /#/approvals         Change-order approvals            │
 │   /#/alerts            Alerts & broadcast                │
 │   /#/outbox            Email outbox + delivery logs      │
 │   /#/audit             Tamper-proof audit trail          │
-│   /#/intelligence      Host-side AI console (v23 fix)    │
-│   /#/integrations      URL config + persistence (v23)   │
-│   /#/settings         Host settings + pw change (v23)   │
+│   /#/intelligence      Host-side AI console              │
+│   /#/integrations      URL config + env checklist        │
 │   /api/admin/*         Admin-only mutations             │
-│   /api/admin/auth/*    Host admin password change (v23) │
 │   /api/auth/*          Host session (HMAC cookie)       │
-│   /api/ai/*            Host AI chat + status (v23 probe) │
+│   /api/ai/*            Host AI chat + status             │
 │   /api/email/*         Host email send + status          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -218,12 +216,6 @@ prototype/                              ← MAIN APP (Vercel project #1)
 | 3 | **Click-outside + Escape-to-close** on the new dropdown | same file | Standard accessible menu pattern |
 | 4 | **Docs pruned to "best useful MD files only"** — sample PDFs, `team.txt`, outdated `CHANGELOG_v13.md` and `PROTOTYPE_FEATURE_MAP.md` removed. What remains: USER_GUIDE, TEAM_GUIDE, DEPLOYMENT_GUIDE, WORKFLOWS, WORKFLOW_IMPLEMENTATION, 15 workflow step files, 9 reference deep dives. | `docs/` | Reviewers should not be faced with stale v4/v13 docs alongside the v22/v23 source |
 | 5 | **Advanced README.md** for the main project (this file) and an **advanced README.md** for `host-control/` (separate, with its own env, deploy, sync, security sections) | repo root + `host-control/` | Each deployment is its own Vercel project — each deserves its own onboarding doc |
-| 6 | **Forgot password + reset password flow** — `#/forgot` and `#/reset?token=<token>` routes; `/api/auth/request-reset` issues a single-use 1-hour token + emails the link (anti-enumeration); `/api/auth/reset-password` verifies the token, hashes the new password with scrypt, marks the token used. The sign-in card has a "Forgot password?" link and an inline recovery panel. A new `PasswordResetToken` Prisma model persists the tokens. | `src/app/api/auth/{request-reset,reset-password,change-password}/route.ts` + `src/components/projectassure/auth/{forgot-password-view,reset-password-view,login-view}.tsx` + `prisma/schema.prisma` | Forgot-password was missing; jury members flagged it as a baseline expectation |
-| 7 | **Authenticated password change** in the main app — `/api/auth/change-password` verifies the current password and replaces the hash; the Settings panel exposes it. In simulation mode (no DATABASE_URL) the local store is updated. | same | Settings panel parity with host-control |
-| 8 | **Approvals: reject with follow-up action** — when the host rejects an approval, the admin picks an action that follows: "notify-only" (default, v21 behaviour), "reject-project" (cancel the project in the main app), "disband-account" (deactivate the user + block future logins + email the user), "block-budget" (freeze further spend). Each kind validates its allowed actions. The reject-with-action path sends a real `host-message` webhook; the main app's `applyHostCommands` parses the message body and applies the side effect on the client store (cancel project / set isActive=false / freeze budget / force logout). | `host-control/src/app/api/admin/approvals/route.ts` + `host-control/src/components/host/approvals-view.tsx` + `src/store/app-store.ts` (applyHostCommands) | Jury members asked: "if I reject a new account, what should happen?" — disband is the answer |
-| 9 | **Host AI honest probe** — `/api/ai/status` now actually probes each provider (Gemini, Groq, sandbox SDK) instead of reporting "configured" unconditionally. The Intelligence Console badge now shows `live` only when at least one provider answered the probe, or `deterministic engine` otherwise. The chat response's `note` is shown honestly under the answer. | `host-control/src/app/api/ai/status/route.ts` + `host-control/src/components/host/intelligence-view.tsx` | The screenshot showed "Live intelligence connected · live" while the chat fell back — now the badge matches reality |
-| 10 | **Integrations: honest persistence note** — the settings API returns a `persistence.mode` field that tells the UI whether changes will survive a Vercel cold start (in-memory per lambda on Vercel, JSON file in dev). The Integrations panel surfaces this as a clear amber note. When the user clicks Save and the value matches what was already stored, the toast now says "No change to save" instead of pretending the save happened. | `host-control/src/app/api/admin/settings/route.ts` + `host-control/src/components/host/integrations-view.tsx` | The Integrations save "didn't work" — root cause was the value matched the stored value; now it's explicit |
-| 11 | **Host Settings panel** — new sidebar entry with: login/budget email toggle, budget breach threshold slider, host admin password change (verifies current pw, hashes new with sha256-salted, persisted to `.host-store.json` in dev), persistence note, and a session card with sign-out. The new `/api/admin/auth/change-password` route updates the stored hash and the host login route now checks the stored hash first (so the change actually takes effect). | `host-control/src/components/host/settings-view.tsx` + `host-control/src/app/api/admin/auth/change-password/route.ts` + `host-control/src/app/api/auth/login/route.ts` + `host-control/src/components/host/shell.tsx` | Settings was implicit (Integrations) before; now it's explicit and the admin can change their own password without editing env vars in dev |
 
 ---
 
@@ -477,48 +469,6 @@ Plus the two top-level READMEs:
 9. Click **Email Centre** → send a portfolio report to any email.
 10. In the host-control tab, refresh → see the new user, project, alert and email appear in the mirror within 5 seconds.
 11. Back in main app, sign in as `karthik.s@nic.in` → role-scoped sidebar (Stakeholder, no edit access).
-
----
-
-## Account persistence — the v23 fix (important)
-
-Before v23, registered accounts could "disappear" after a browser cache clear, a
-different device, or a Vercel cold start. The root cause was a three-way mismatch
-between the client store, the server database, and the login flow.
-
-**The v23 fix:**
-
-1. **Sign-up mirrors to the DB and switches to a sentinel hash.** When `/api/auth/register`
-   returns 201, the client store replaces the local PBKDF2 hash with the
-   `server::scrypt` sentinel. This tells the login flow: "the real hash lives on
-   the server — call `/api/auth/login` to verify."
-
-2. **Login falls back to the server.** Three cases trigger a `/api/auth/login`
-   round-trip: (a) the user isn't in the local store at all, (b) the user has
-   the `server::scrypt` sentinel, or (c) the local PBKDF2 verify fails (the user
-   may have reset their password). On success, the user is merged into the
-   local store so future logins work without a round-trip.
-
-3. **Boot fetches registered users from the DB.** `syncUsersFromServer()` runs
-   once on boot, hits the public `/api/users-list` endpoint, and merges any
-   users we don't already have into the local store. This is what makes a
-   registered account visible in a fresh browser, after a cache clear, or on
-   a different device — even if the user never signed in there before.
-
-4. **Sign-up surfaces DB errors.** If the server returns `DB_UNAVAILABLE`
-   (typically: the Prisma schema hasn't been pushed and the `User` or
-   `PasswordResetToken` table is missing), the client store now shows a
-   clear toast: "Account created locally, but server mirror failed" with the
-   error message. The user can still use the app in demo mode (the local
-   hash stands), but they're not silently misled into thinking the account
-   is persisted server-side.
-
-**What this means for production:** set `DATABASE_URL` on the main Vercel
-project, run `npx prisma db push` once after the first deploy (or after any
-schema change — the v23 `PasswordResetToken` table is new), and registered
-accounts will survive every kind of reset. Without `DATABASE_URL`, the app
-runs in simulation mode (localStorage-only) — fine for the demo, but accounts
-are per-browser.
 
 ---
 
