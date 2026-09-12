@@ -21,7 +21,7 @@ import type { Project, Milestone } from "@/lib/projectassure/types";
 const REFRESH_MS = 5000;
 
 export default function TrackingView() {
-  const projects = useApp(s => s.projects);
+  const projects = useApp(s => s.scoped());
   const user = useApp(s => s.user)!;
   const applyNextEvent = useApp(s => s.applyNextEvent);
   const liveEventsEnabled = useApp(s => s.liveEventsEnabled);

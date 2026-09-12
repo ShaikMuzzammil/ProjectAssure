@@ -56,7 +56,7 @@ const STATUS_COLOR: Record<ProjectStatus, string> = {
 };
 
 export default function IndiaMapView() {
-  const projects = useApp(s => s.projects);
+  const projects = useApp(s => s.scoped());
   const navigate = useApp(s => s.navigate);
   const applyNextEvent = useApp(s => s.applyNextEvent);
   const liveEventsEnabled = useApp(s => s.liveEventsEnabled);
