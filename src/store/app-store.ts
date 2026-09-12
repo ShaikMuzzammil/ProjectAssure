@@ -29,7 +29,7 @@ import { buildSyncSnapshot, scheduleSync, pushSyncNow, pollCommands, startComman
 import type { SyncCommand } from "@/lib/sync/types";
 import { toast } from "sonner";
 
-const STORE_VERSION = 12;  // v23.1 — bump to clear the stale `server::scrypt` sentinel hashes from the v23 bug
+const STORE_VERSION = 11;  // v23.4 — reverted to v11 to preserve existing user data
 
 export interface Route { page: "landing" | "about" | "login" | "app" | "demo" | "public" | "forgot" | "reset"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; resetToken?: string; }
 
@@ -1637,7 +1637,7 @@ export const useApp = create<AppState>()(
       stats: () => computePortfolioStats(get().scoped()),
     }),
     {
-      name: "projectassure-store-v14",  // v23.1 — renamed to force a clean re-hydration (clears stale sentinel hashes)
+      name: "projectassure-store-v13",  // v23.4 — reverted to v13 to preserve existing user data
       version: STORE_VERSION,
       // v9 identity release (v12): key renamed so old sessions boot into the
       // refreshed world (intelligence terminology, SIH-portal branding)
@@ -1654,52 +1654,35 @@ export const useApp = create<AppState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.vectorIndex = buildIndex(state.projects ?? []);
-        // v23.1 — migration from v13: if the old `projectassure-store-v13`
-        // exists in localStorage, read its users array and merge any
-        // registered users that have a valid PBKDF2 hash. This preserves
-        // accounts created in the previous (broken-v23) store so users don't
-        // have to re-register. Users with the stale `server::scrypt` sentinel
-        // are skipped (they need to re-register or use forgot-password).
-        if (typeof window !== "undefined" && state) {
-          try {
-            const oldRaw = localStorage.getItem("projectassure-store-v13");
-            if (oldRaw) {
-              const oldParsed = JSON.parse(oldRaw) as { state?: { users?: User[]; user?: User | null } };
-              const oldUsers = oldParsed?.state?.users ?? [];
-              const existingEmails = new Set((state.users ?? []).map((u) => u.email.toLowerCase()));
-              const toMerge = oldUsers.filter(
-                (u) =>
-                  u &&
-                  u.email &&
-                  u.source === "registered" &&
-                  typeof u.passwordHash === "string" &&
-                  u.passwordHash.startsWith("pbkdf2$") &&
-                  !existingEmails.has(u.email.toLowerCase()),
-              );
-              if (toMerge.length) {
-                state.users = [...(state.users ?? []), ...toMerge];
-                console.info(`[ProjectAssure] Migrated ${toMerge.length} registered account(s) from the previous store.`);
-              }
-              // Also restore the logged-in user if they had a valid PBKDF2 hash.
-              // This keeps the user signed in across the store upgrade.
-              const oldUser = oldParsed?.state?.user;
-              if (
-                oldUser &&
-                oldUser.email &&
-                typeof oldUser.passwordHash === "string" &&
-                oldUser.passwordHash.startsWith("pbkdf2$") &&
-                !state.user
-              ) {
-                state.user = oldUser;
-                // Make sure the user is in the users array too.
-                if (!state.users.some((u) => u.email.toLowerCase() === oldUser.email.toLowerCase())) {
-                  state.users = [...(state.users ?? []), oldUser];
-                }
-                console.info(`[ProjectAssure] Restored session for ${oldUser.email} from the previous store.`);
-              }
+        // v23.4 — in-place cleanup of stale `server::scrypt` sentinel hashes.
+        // The v23 bug replaced local PBKDF2 hashes with the sentinel, which
+        // broke local login. We clean them up in-place: any user with the
+        // sentinel hash gets their hash cleared (so login falls through to
+        // the server fallback). Users with valid PBKDF2 hashes are kept
+        // as-is. This runs once on rehydration and doesn't require a store
+        // version bump, so existing user data (projects, notifications, etc.)
+        // is preserved.
+        if (state && Array.isArray(state.users)) {
+          let cleaned = 0;
+          state.users = state.users.map((u) => {
+            if (u && typeof u.passwordHash === "string" && u.passwordHash === "server::scrypt") {
+              cleaned++;
+              // Clear the sentinel so login falls through to /api/auth/login.
+              // The user can still log in via the server (which has the real
+              // scrypt hash). After a successful server login, the user record
+              // is merged back with the sentinel (which is correct for
+              // server-fetched users).
+              return { ...u, passwordHash: undefined };
             }
-          } catch {
-            // old store is missing or corrupt — fresh start, which is fine
+            return u;
+          });
+          // Also clean up the current user if they have the sentinel
+          if (state.user && state.user.passwordHash === "server::scrypt") {
+            state.user = { ...state.user, passwordHash: undefined };
+            cleaned++;
+          }
+          if (cleaned > 0) {
+            console.info(`[ProjectAssure] Cleaned ${cleaned} stale sentinel hash(es) in-place. Login will use the server fallback for these accounts.`);
           }
         }
       },
