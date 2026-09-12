@@ -36,7 +36,10 @@ export async function POST(req: Request) {
 
   // The reset link target. We trust the request's origin (or fall back to
   // the env var) — never trust arbitrary user-provided URLs.
-  const origin = (body.origin || process.env.NEXT_PUBLIC_APP_URL || "").trim().replace(/\/+$/, "");
+  // v23.2 — fall back to NEXTAUTH_URL if NEXT_PUBLIC_APP_URL is not set,
+  // so users who already have NEXTAUTH_URL configured don't need to add a
+  // new env var for the forgot-password flow to work.
+  const origin = (body.origin || process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "").trim().replace(/\/+$/, "");
   if (!origin) {
     return NextResponse.json({ error: "CONFIG_ERROR", message: "Could not determine the app URL — set NEXT_PUBLIC_APP_URL." }, { status: 500 });
   }
