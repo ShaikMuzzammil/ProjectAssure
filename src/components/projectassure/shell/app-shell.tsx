@@ -112,13 +112,6 @@ export default function AppShell({ portal }: { portal: PortalId }) {
 
   const unread = notifications.filter(n => !n.isRead && (n.userId === "all" || n.userId === user.id)).length;
 
-  // v23.3 — filter live events to only show those for projects the user can
-  // see (scoped). Demo events for demo projects don't appear for registered
-  // users who don't own those projects.
-  const scopedProjectIds = useApp(s => s.scoped)().map(p => p.id);
-  const scopedEvent = (ev: { projectId?: string }) => !ev.projectId || scopedProjectIds.includes(ev.projectId);
-  const visibleLiveEvents = liveEvents.filter(scopedEvent);
-
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -223,8 +216,8 @@ export default function AppShell({ portal }: { portal: PortalId }) {
                 Live portfolio feed
               </div>
               <div className="custom-scrollbar max-h-28 space-y-1.5 overflow-y-auto">
-                {visibleLiveEvents.length === 0 && <div className="text-[10.5px] text-muted-foreground">Listening for portfolio events…</div>}
-                {visibleLiveEvents.slice(0, 6).map(ev => (
+                {liveEvents.length === 0 && <div className="text-[10.5px] text-muted-foreground">Listening for portfolio events…</div>}
+                {liveEvents.slice(0, 6).map(ev => (
                   <div key={ev.id} className="text-[10.5px] leading-snug text-muted-foreground">
                     <span className="tabular text-[9.5px] text-muted-foreground">{relTime(ev.at)}</span>{" "}
                     <span className="font-medium text-foreground/80">{ev.title}</span>

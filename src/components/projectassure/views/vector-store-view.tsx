@@ -12,7 +12,7 @@ import { Database, Search, Braces, FileText, Cpu, Layers } from "lucide-react";
 
 export default function VectorStoreView() {
   const vectorIndex = useApp(s => s.vectorIndex);
-  const projects = useApp(s => s.scoped());
+  const projects = useApp(s => s.projects);
   const openProject = useApp(s => s.openProject);
   const [q, setQ] = useState("");
   const [projectId, setProjectId] = useState("all");

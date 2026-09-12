@@ -29,7 +29,7 @@ import { buildSyncSnapshot, scheduleSync, pushSyncNow, pollCommands, startComman
 import type { SyncCommand } from "@/lib/sync/types";
 import { toast } from "sonner";
 
-const STORE_VERSION = 11;  // v23.4 — reverted to v11 to preserve existing user data
+const STORE_VERSION = 12;  // v23.1 — bump to clear the stale `server::scrypt` sentinel hashes from the v23 bug
 
 export interface Route { page: "landing" | "about" | "login" | "app" | "demo" | "public" | "forgot" | "reset"; view: ViewId; projectId?: string; detailTab?: string; portal: PortalId; resetToken?: string; }
 
@@ -415,18 +415,6 @@ export const useApp = create<AppState>()(
             const stamp = new Date().toISOString();
             set({ user: { ...u, lastLoginAt: stamp } });
             set(s => ({ users: s.users.map(x => x.id === u.id ? { ...x, lastLoginAt: stamp } : x) }));
-
-            // v23.3 — for registered users, filter out demo "all" notifications
-            // so they have a clean workspace. Demo personas keep all notifications.
-            if (u.source === "registered") {
-              set(s => ({
-                notifications: s.notifications.filter(n =>
-                  n.userId === u.id ||
-                  (n.userId === "all" && Date.parse(n.createdAt) > Date.parse(stamp) - 60000)
-                ),
-              }));
-            }
-
             get().audit("LOGIN", "Session", `Account login (PBKDF2-SHA256 verified locally, 100k iterations) for ${u.email} (${u.role}) · login event pushed to Host Control sync hub`, { entityId: u.id });
             get().pushNotification({ userId: u.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")} (password verified locally). If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
             get().goPage("app");
@@ -618,28 +606,7 @@ export const useApp = create<AppState>()(
         // offline/simulation mode. The server mirror is a bonus, not a
         // replacement.
         set({ user: { ...u, lastLoginAt: stamp, passwordHash } });
-
-        // v23.3 — SEPARATE NEW USERS FROM DEMO DATA. A new registered user
-        // should NOT see demo notifications (userId: "all" from the seed) or
-        // demo emails. Their workspace should be clean — only their own data.
-        // We filter out demo-seed "all" notifications and demo emails. Host
-        // broadcasts that arrive AFTER this point (via the sync poll) will
-        // still appear because they arrive with a fresh timestamp.
-        set(s => ({
-          notifications: s.notifications.filter(n =>
-            // keep the user's own notifications
-            n.userId === u.id ||
-            // keep the welcome notification we just pushed
-            n.title === "Welcome to ProjectAssure" ||
-            // keep host broadcasts that arrived AFTER the user signed up
-            // (identified by timestamp > stamp)
-            (n.userId === "all" && Date.parse(n.createdAt) > Date.parse(stamp) - 1000)
-          ),
-          // clear demo emails — new user starts with an empty outbox
-          emails: s.emails.filter(e => e.userId === u.id || (e as { ownerEmail?: string }).ownerEmail === email),
-        }));
-
-        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt) + local PBKDF2 backup" : "stored locally (simulation mode — set DATABASE_URL for cross-device persistence)"} · auto-login · demo data cleared from workspace${mirrorError ? ` · mirror error: ${mirrorError}` : ""}`, { entityId: u.id });
+        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt) + local PBKDF2 backup" : "stored locally (simulation mode — set DATABASE_URL for cross-device persistence)"} · auto-login${mirrorError ? ` · mirror error: ${mirrorError}` : ""}`, { entityId: u.id });
         if (mirrorError) {
           // v23 — surface DB errors so the user knows their account is NOT
           // persisted server-side. They can still use the app in demo mode
@@ -649,10 +616,7 @@ export const useApp = create<AppState>()(
         }
         get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. Create your first project to activate ML monitoring, upload documents and export reports.`, type: "SYSTEM", linkView: "projects" });
         // v21: new user → notify every ADMIN (they govern access) + sync to hub
-        // v23.3: only notify ADMIN users who are demo personas (seed admins).
-        // Registered ADMINs are not notified of every new signup — only the
-        // host-control mirror sees them via the sync hub.
-        get().users.filter(x => x.role === "ADMIN" && x.source === "demo" && x.id !== u.id).forEach(admin => {
+        get().users.filter(x => x.role === "ADMIN" && x.id !== u.id).forEach(admin => {
           get().pushNotification({ userId: admin.id, title: "👤 New account awaiting your watch", message: `${name} (${email}) registered as ${u.role.replace("_", " ").toLowerCase()} — visible in Host Control now.`, type: "SYSTEM", linkView: "admin" });
         });
         get().goPage("app");
@@ -1637,7 +1601,7 @@ export const useApp = create<AppState>()(
       stats: () => computePortfolioStats(get().scoped()),
     }),
     {
-      name: "projectassure-store-v13",  // v23.4 — reverted to v13 to preserve existing user data
+      name: "projectassure-store-v14",  // v23.1 — renamed to force a clean re-hydration (clears stale sentinel hashes)
       version: STORE_VERSION,
       // v9 identity release (v12): key renamed so old sessions boot into the
       // refreshed world (intelligence terminology, SIH-portal branding)
@@ -1654,35 +1618,52 @@ export const useApp = create<AppState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) state.vectorIndex = buildIndex(state.projects ?? []);
-        // v23.4 — in-place cleanup of stale `server::scrypt` sentinel hashes.
-        // The v23 bug replaced local PBKDF2 hashes with the sentinel, which
-        // broke local login. We clean them up in-place: any user with the
-        // sentinel hash gets their hash cleared (so login falls through to
-        // the server fallback). Users with valid PBKDF2 hashes are kept
-        // as-is. This runs once on rehydration and doesn't require a store
-        // version bump, so existing user data (projects, notifications, etc.)
-        // is preserved.
-        if (state && Array.isArray(state.users)) {
-          let cleaned = 0;
-          state.users = state.users.map((u) => {
-            if (u && typeof u.passwordHash === "string" && u.passwordHash === "server::scrypt") {
-              cleaned++;
-              // Clear the sentinel so login falls through to /api/auth/login.
-              // The user can still log in via the server (which has the real
-              // scrypt hash). After a successful server login, the user record
-              // is merged back with the sentinel (which is correct for
-              // server-fetched users).
-              return { ...u, passwordHash: undefined };
+        // v23.1 — migration from v13: if the old `projectassure-store-v13`
+        // exists in localStorage, read its users array and merge any
+        // registered users that have a valid PBKDF2 hash. This preserves
+        // accounts created in the previous (broken-v23) store so users don't
+        // have to re-register. Users with the stale `server::scrypt` sentinel
+        // are skipped (they need to re-register or use forgot-password).
+        if (typeof window !== "undefined" && state) {
+          try {
+            const oldRaw = localStorage.getItem("projectassure-store-v13");
+            if (oldRaw) {
+              const oldParsed = JSON.parse(oldRaw) as { state?: { users?: User[]; user?: User | null } };
+              const oldUsers = oldParsed?.state?.users ?? [];
+              const existingEmails = new Set((state.users ?? []).map((u) => u.email.toLowerCase()));
+              const toMerge = oldUsers.filter(
+                (u) =>
+                  u &&
+                  u.email &&
+                  u.source === "registered" &&
+                  typeof u.passwordHash === "string" &&
+                  u.passwordHash.startsWith("pbkdf2$") &&
+                  !existingEmails.has(u.email.toLowerCase()),
+              );
+              if (toMerge.length) {
+                state.users = [...(state.users ?? []), ...toMerge];
+                console.info(`[ProjectAssure] Migrated ${toMerge.length} registered account(s) from the previous store.`);
+              }
+              // Also restore the logged-in user if they had a valid PBKDF2 hash.
+              // This keeps the user signed in across the store upgrade.
+              const oldUser = oldParsed?.state?.user;
+              if (
+                oldUser &&
+                oldUser.email &&
+                typeof oldUser.passwordHash === "string" &&
+                oldUser.passwordHash.startsWith("pbkdf2$") &&
+                !state.user
+              ) {
+                state.user = oldUser;
+                // Make sure the user is in the users array too.
+                if (!state.users.some((u) => u.email.toLowerCase() === oldUser.email.toLowerCase())) {
+                  state.users = [...(state.users ?? []), oldUser];
+                }
+                console.info(`[ProjectAssure] Restored session for ${oldUser.email} from the previous store.`);
+              }
             }
-            return u;
-          });
-          // Also clean up the current user if they have the sentinel
-          if (state.user && state.user.passwordHash === "server::scrypt") {
-            state.user = { ...state.user, passwordHash: undefined };
-            cleaned++;
-          }
-          if (cleaned > 0) {
-            console.info(`[ProjectAssure] Cleaned ${cleaned} stale sentinel hash(es) in-place. Login will use the server fallback for these accounts.`);
+          } catch {
+            // old store is missing or corrupt — fresh start, which is fine
           }
         }
       },

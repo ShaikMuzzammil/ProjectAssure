@@ -1,20 +1,14 @@
-// ProjectAssure — Prisma schema (PRODUCTION: PostgreSQL)
-// v23.3 — FIXED: the default schema now uses `postgresql` provider so it
-// works with the DATABASE_URL you set on Vercel (Neon/Supabase Postgres).
-// The previous default was `sqlite` which caused:
-//   "the URL must start with the protocol `file:`"
-// when a Postgres DATABASE_URL was provided.
-//
-// For local SQLite dev, copy schema.sqlite.prisma over this file.
-// Production (Neon PostgreSQL): DATABASE_URL = pooled connection string.
-// Run: npx prisma generate && npx prisma db push
+// ProjectAssure — Prisma schema (LOCAL DEV / sandbox: SQLite)
+// Production (Neon PostgreSQL): copy schema.postgres.prisma over this file,
+// set DATABASE_URL (pooled :6543) + DIRECT_URL (:5432), run prisma generate.
+// 16 models · mirrors src/lib/projectassure/types.ts
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 

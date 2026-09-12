@@ -53,8 +53,7 @@ const TABS = [
 export default function ProjectDetailView() {
   const user = useApp(s => s.user)!;
   const route = useApp(s => s.route);
-  const allProjects = useApp(s => s.projects);
-  const scopedProjects = useApp(s => s.scoped());
+  const projects = useApp(s => s.projects);
   const navigate = useApp(s => s.navigate);
   const setDetailTab = useApp(s => s.setDetailTab);
   const openProject = useApp(s => s.openProject);
@@ -71,9 +70,7 @@ export default function ProjectDetailView() {
   const recordExport = useApp(s => s.recordExport);
   const queueEmail = useApp(s => s.queueEmail);
 
-  // v23.3 — use scopedProjects first (so registered users only see their own),
-  // fall back to allProjects for ADMIN who can see everything.
-  const p = scopedProjects.find(x => x.id === route.projectId) ?? allProjects.find(x => x.id === route.projectId);
+  const p = projects.find(x => x.id === route.projectId);
   const [tab, setTab] = useState(route.detailTab ?? "overview");
   const [predicting, setPredicting] = useState(false);
   const [msDialog, setMsDialog] = useState(false);

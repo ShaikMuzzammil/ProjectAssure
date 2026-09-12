@@ -14,9 +14,7 @@ import { cn } from "@/lib/utils";
 // host-control shell (see host-control/src/components/host/shell.tsx). Each
 // item deep-links into the live host deployment via its hash route, so a
 // visitor can jump straight to the panel they care about.
-// v23.2 — the URL is configurable via NEXT_PUBLIC_HOST_URL env var, falling
-// back to the live Vercel deployment.
-const HOST_CONTROL_URL = (process.env.NEXT_PUBLIC_HOST_URL || "https://project-assure-host.vercel.app/").replace(/\/+$/, "");
+const HOST_CONTROL_URL = "https://project-assure-host.vercel.app/";
 const HOST_CONTROL_OPTIONS = [
   { icon: LayoutDashboard, label: "Mission Dashboard", hash: "#/dashboard" },
   { icon: Users,            label: "User Management",   hash: "#/users" },

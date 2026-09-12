@@ -47,7 +47,7 @@ function distance(lat1: number, lng1: number, lat2: number, lng2: number) {
 }
 
 export default function GeoAuditView() {
-  const projects = useApp(s => s.scoped());
+  const projects = useApp(s => s.projects);
   const user = useApp(s => s.user)!;
   const navigate = useApp(s => s.navigate);
 
