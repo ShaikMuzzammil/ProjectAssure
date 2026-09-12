@@ -1,7 +1,11 @@
 // ProjectAssure Host Control — Prisma schema
-// Minimal schema (no database required for the demo, but `prisma generate`
-// must succeed during `npm install` on Vercel). In production you would
-// connect this to Neon Postgres by setting DATABASE_URL.
+// v23.3 — The host-control runs in-RAM (in-memory store) without a database.
+// This schema is ONLY used for `prisma generate` during `npm install` on Vercel.
+// We use SQLite with a local file path so `prisma generate` succeeds without
+// needing DATABASE_URL to be set.
+// If you want durable host state, set DATABASE_URL on the host-control Vercel
+// project (can be the same Postgres as the main app) and change provider to
+// "postgresql".
 
 generator client {
   provider = "prisma-client-js"

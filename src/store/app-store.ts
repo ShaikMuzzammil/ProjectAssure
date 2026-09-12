@@ -415,6 +415,18 @@ export const useApp = create<AppState>()(
             const stamp = new Date().toISOString();
             set({ user: { ...u, lastLoginAt: stamp } });
             set(s => ({ users: s.users.map(x => x.id === u.id ? { ...x, lastLoginAt: stamp } : x) }));
+
+            // v23.3 — for registered users, filter out demo "all" notifications
+            // so they have a clean workspace. Demo personas keep all notifications.
+            if (u.source === "registered") {
+              set(s => ({
+                notifications: s.notifications.filter(n =>
+                  n.userId === u.id ||
+                  (n.userId === "all" && Date.parse(n.createdAt) > Date.parse(stamp) - 60000)
+                ),
+              }));
+            }
+
             get().audit("LOGIN", "Session", `Account login (PBKDF2-SHA256 verified locally, 100k iterations) for ${u.email} (${u.role}) · login event pushed to Host Control sync hub`, { entityId: u.id });
             get().pushNotification({ userId: u.id, title: "🔐 New sign-in to your account", message: `Signed in at ${new Date(stamp).toLocaleString("en-IN")} (password verified locally). If this wasn't you, contact your administrator.`, type: "SYSTEM", linkView: "notifications" });
             get().goPage("app");
@@ -606,7 +618,28 @@ export const useApp = create<AppState>()(
         // offline/simulation mode. The server mirror is a bonus, not a
         // replacement.
         set({ user: { ...u, lastLoginAt: stamp, passwordHash } });
-        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt) + local PBKDF2 backup" : "stored locally (simulation mode — set DATABASE_URL for cross-device persistence)"} · auto-login${mirrorError ? ` · mirror error: ${mirrorError}` : ""}`, { entityId: u.id });
+
+        // v23.3 — SEPARATE NEW USERS FROM DEMO DATA. A new registered user
+        // should NOT see demo notifications (userId: "all" from the seed) or
+        // demo emails. Their workspace should be clean — only their own data.
+        // We filter out demo-seed "all" notifications and demo emails. Host
+        // broadcasts that arrive AFTER this point (via the sync poll) will
+        // still appear because they arrive with a fresh timestamp.
+        set(s => ({
+          notifications: s.notifications.filter(n =>
+            // keep the user's own notifications
+            n.userId === u.id ||
+            // keep the welcome notification we just pushed
+            n.title === "Welcome to ProjectAssure" ||
+            // keep host broadcasts that arrived AFTER the user signed up
+            // (identified by timestamp > stamp)
+            (n.userId === "all" && Date.parse(n.createdAt) > Date.parse(stamp) - 1000)
+          ),
+          // clear demo emails — new user starts with an empty outbox
+          emails: s.emails.filter(e => e.userId === u.id || (e as { ownerEmail?: string }).ownerEmail === email),
+        }));
+
+        get().audit("REGISTER", "User", `Account ${email} created (${u.role}) · one-way encryption with a unique salt · ${mirrored ? "mirrored to secure cloud database via /api/auth/register (scrypt) + local PBKDF2 backup" : "stored locally (simulation mode — set DATABASE_URL for cross-device persistence)"} · auto-login · demo data cleared from workspace${mirrorError ? ` · mirror error: ${mirrorError}` : ""}`, { entityId: u.id });
         if (mirrorError) {
           // v23 — surface DB errors so the user knows their account is NOT
           // persisted server-side. They can still use the app in demo mode
@@ -616,7 +649,10 @@ export const useApp = create<AppState>()(
         }
         get().pushNotification({ userId: u.id, title: "Welcome to ProjectAssure", message: `Your workspace is ready, ${name.split(" ")[0]}. Create your first project to activate ML monitoring, upload documents and export reports.`, type: "SYSTEM", linkView: "projects" });
         // v21: new user → notify every ADMIN (they govern access) + sync to hub
-        get().users.filter(x => x.role === "ADMIN" && x.id !== u.id).forEach(admin => {
+        // v23.3: only notify ADMIN users who are demo personas (seed admins).
+        // Registered ADMINs are not notified of every new signup — only the
+        // host-control mirror sees them via the sync hub.
+        get().users.filter(x => x.role === "ADMIN" && x.source === "demo" && x.id !== u.id).forEach(admin => {
           get().pushNotification({ userId: admin.id, title: "👤 New account awaiting your watch", message: `${name} (${email}) registered as ${u.role.replace("_", " ").toLowerCase()} — visible in Host Control now.`, type: "SYSTEM", linkView: "admin" });
         });
         get().goPage("app");
